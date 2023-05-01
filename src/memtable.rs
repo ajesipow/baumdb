@@ -33,9 +33,9 @@ impl IntoIterator for MemTable {
 
 #[async_trait]
 impl DB for MemTable {
-    async fn get(&self, key: &str) -> Result<Option<&String>> {
+    async fn get(&self, key: &str) -> Result<Option<String>> {
         Ok(self.0.get(key).and_then(|v| match v {
-            MemValue::Put(str) => Some(str),
+            MemValue::Put(str) => Some(str.to_string()),
             MemValue::Delete => None,
         }))
     }

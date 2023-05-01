@@ -8,3 +8,6 @@
 
 mod db;
 mod memtable;
+
+pub use db::BaumDb;
+pub use db::DB;
