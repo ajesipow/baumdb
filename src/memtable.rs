@@ -5,13 +5,31 @@ use std::collections::BTreeMap;
 
 #[non_exhaustive]
 #[derive(Debug)]
-enum MemValue {
+pub(crate) enum MemValue {
     Put(String),
     Delete,
 }
 
 #[derive(Default, Debug)]
 pub(crate) struct MemTable(BTreeMap<String, MemValue>);
+
+impl MemTable {
+    /// The size of the MemTable
+    pub(crate) fn len(&self) -> usize {
+        // TODO adjust this to take the effective size of the table into account, not just the
+        // number of entries.
+        self.0.len()
+    }
+}
+
+impl IntoIterator for MemTable {
+    type Item = (String, MemValue);
+    type IntoIter = std::collections::btree_map::IntoIter<String, MemValue>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
 
 #[async_trait]
 impl DB for MemTable {
