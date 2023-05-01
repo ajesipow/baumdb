@@ -75,7 +75,7 @@ impl DB for BaumDb {
 }
 
 impl BaumDb {
-    pub async fn new<P>(sst_dir_path: P) -> Self
+    pub async fn new<P>(sst_dir_path: P, max_memtable_size: usize) -> Self
     where
         P: AsRef<Path>,
         P: Into<PathBuf>,
@@ -88,7 +88,7 @@ impl BaumDb {
         }
         Self {
             memtable: Default::default(),
-            max_memtable_size: 4,
+            max_memtable_size,
             sst_dir_path: path,
         }
     }
