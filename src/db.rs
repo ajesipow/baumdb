@@ -19,7 +19,11 @@ pub trait DB {
 
 #[derive(Debug)]
 pub struct BaumDb {
-    memtable: MemTable,
+    // The main memtable for reading from and writing to.
+    rw_table: MemTable,
+    // A secondary table that must only be read from. It is used to support reads while the main table
+    // is flushed to disk.
+    read_table: MemTable,
     max_memtable_size: usize,
     sst_dir_path: PathBuf,
 }
@@ -27,10 +31,14 @@ pub struct BaumDb {
 #[async_trait]
 impl DB for BaumDb {
     async fn get(&self, key: &str) -> Result<Option<String>> {
-        match self.memtable.get(key).await? {
+        if let Some(value) = self.rw_table.get(key).await? {
+            return Ok(Some(value));
+        }
+        match self.read_table.get(key).await? {
             Some(value) => Ok(Some(value)),
             None => {
                 // TODO check SSTables newest to oldest instead of just going over all files
+                // TODO Don't have to check
                 let mut stream = read_dir(&self.sst_dir_path).await?;
                 while let Some(entry) = stream.next_entry().await? {
                     let path = entry.path();
@@ -64,13 +72,14 @@ impl DB for BaumDb {
     }
 
     async fn put(&mut self, key: String, value: String) -> Result<()> {
-        self.memtable.put(key, value).await?;
-        self.handle_memtable().await
+        self.rw_table.put(key, value).await?;
+        self.maybe_flush_memtable().await
     }
 
     async fn delete(&mut self, key: &str) -> Result<()> {
-        self.memtable.delete(key).await?;
-        self.handle_memtable().await
+        // TODO handle read memtable
+        self.rw_table.delete(key).await?;
+        self.maybe_flush_memtable().await
     }
 }
 
@@ -87,25 +96,26 @@ impl BaumDb {
                 .expect("be able to create directory");
         }
         Self {
-            memtable: Default::default(),
+            rw_table: Default::default(),
+            read_table: Default::default(),
             max_memtable_size,
             sst_dir_path: path,
         }
     }
 
-    async fn handle_memtable(&mut self) -> Result<()> {
-        if self.memtable.len() >= self.max_memtable_size {
+    async fn maybe_flush_memtable(&mut self) -> Result<()> {
+        if self.read_table.len() >= self.max_memtable_size {
             self.flush_memtable().await?;
         }
         Ok(())
     }
 
     async fn flush_memtable(&mut self) -> Result<()> {
-        let previous_memtable = mem::take(&mut self.memtable);
-        // Write to disk in separate thread:
-        // 1. Index
-        // 2. Data
-        // TODO: logic for filenaming
+        // Can be safely reset because it only contains data that has already been flushed to disk
+        self.read_table = Default::default();
+        mem::swap(&mut self.read_table, &mut self.rw_table);
+        let previous_memtable = self.read_table.clone();
+        // TODO: logic for file naming
         // TODO: error handling of file writing?
         tokio::task::spawn(Self::flush_memtable_inner(
             self.sst_dir_path.to_path_buf(),

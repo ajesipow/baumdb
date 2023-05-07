@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use std::collections::BTreeMap;
 
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum MemValue {
     Put(String),
     Delete,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct MemTable(BTreeMap<String, MemValue>);
 
 impl MemTable {

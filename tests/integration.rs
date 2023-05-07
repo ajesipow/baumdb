@@ -1,9 +1,21 @@
 use baumdb::BaumDb;
 use baumdb::DB;
+use tokio::fs::remove_dir_all;
+
+static TEST_LOG_PATH: &str = "./test-logs";
+
+async fn prepare_test() {
+    let _ = remove_dir_all(TEST_LOG_PATH).await;
+}
+
+async fn test_clean_up() {
+    let _ = remove_dir_all(TEST_LOG_PATH).await;
+}
 
 #[tokio::test]
 async fn test_basic_ops() {
-    let mut db = BaumDb::new("./logs", 2).await;
+    prepare_test().await;
+    let mut db = BaumDb::new(TEST_LOG_PATH, 2).await;
 
     let key = "foo";
     let value = "value";
@@ -16,11 +28,13 @@ async fn test_basic_ops() {
 
     let returned_value = db.get(key).await.unwrap();
     assert!(returned_value.is_none());
+    test_clean_up().await;
 }
 
 #[tokio::test]
 async fn test_basic_ops_with_many_keys() {
-    let mut db = BaumDb::new("./logs", 2).await;
+    prepare_test().await;
+    let mut db = BaumDb::new(TEST_LOG_PATH, 2).await;
 
     let key_values = vec![("A", "1"), ("B", "2"), ("C", "3"), ("D", "3"), ("E", "4")];
     for (key, value) in key_values.iter() {
@@ -42,4 +56,5 @@ async fn test_basic_ops_with_many_keys() {
         let returned_value = db.get(key).await.unwrap();
         assert!(returned_value.is_none());
     }
+    test_clean_up().await;
 }
