@@ -1,21 +1,25 @@
 use baumdb::BaumDb;
 use baumdb::DB;
-use tokio::fs::remove_dir_all;
+use std::path::{Path, PathBuf};
+use tokio::fs::{create_dir_all, remove_dir_all};
+use uuid::Uuid;
 
 static TEST_LOG_PATH: &str = "./test-logs";
 
-async fn prepare_test() {
-    let _ = remove_dir_all(TEST_LOG_PATH).await;
+async fn prepare_test() -> PathBuf {
+    let path = PathBuf::from(format!("{TEST_LOG_PATH}/{:?}", Uuid::new_v4()));
+    let _ = create_dir_all(&path).await;
+    path
 }
 
-async fn test_clean_up() {
-    let _ = remove_dir_all(TEST_LOG_PATH).await;
+async fn test_clean_up(path: impl AsRef<Path>) {
+    let _ = remove_dir_all(path).await;
 }
 
 #[tokio::test]
 async fn test_basic_ops() {
-    prepare_test().await;
-    let mut db = BaumDb::new(TEST_LOG_PATH, 2).await;
+    let path = prepare_test().await;
+    let mut db = BaumDb::new(&path, 2).await;
 
     let key = "foo";
     let value = "value";
@@ -28,13 +32,13 @@ async fn test_basic_ops() {
 
     let returned_value = db.get(key).await.unwrap();
     assert!(returned_value.is_none());
-    test_clean_up().await;
+    test_clean_up(&path).await;
 }
 
 #[tokio::test]
 async fn test_basic_ops_with_many_keys() {
-    prepare_test().await;
-    let mut db = BaumDb::new(TEST_LOG_PATH, 2).await;
+    let path = prepare_test().await;
+    let mut db = BaumDb::new(&path, 2).await;
 
     let key_values = vec![("A", "1"), ("B", "2"), ("C", "3"), ("D", "3"), ("E", "4")];
     for (key, value) in key_values.iter() {
@@ -56,5 +60,5 @@ async fn test_basic_ops_with_many_keys() {
         let returned_value = db.get(key).await.unwrap();
         assert!(returned_value.is_none());
     }
-    test_clean_up().await;
+    test_clean_up(&path).await;
 }
