@@ -45,7 +45,6 @@ async fn test_basic_ops_with_many_keys() {
         db.put(key.to_string(), value.to_string()).await.unwrap();
     }
 
-    // FIXME: while memtable is flushed to disk, we won't find some keys
     for (key, value) in key_values.iter() {
         let returned_value = db.get(key).await.unwrap();
         assert_eq!(returned_value.as_deref(), Some(*value));
@@ -61,4 +60,40 @@ async fn test_basic_ops_with_many_keys() {
         assert!(returned_value.is_none());
     }
     test_clean_up(&path).await;
+}
+
+#[tokio::test]
+async fn test_updating_a_key_works() {
+    let path = prepare_test().await;
+    let mut db = BaumDb::new(&path, 5).await;
+
+    let key = "SomeKey".to_string();
+    let value = "1".to_string();
+
+    db.put(key.clone(), value.clone()).await.unwrap();
+    let returned_value = db.get(&key).await.unwrap();
+    assert_eq!(returned_value, Some(value));
+
+    // Add some random values into the db to ensure data has been flushed to disk
+    for i in 0..1000 {
+        db.put(i.to_string(), "SomeValue".to_string())
+            .await
+            .unwrap();
+    }
+
+    let value = "2".to_string();
+
+    db.put(key.clone(), value.clone()).await.unwrap();
+
+    // Add some random values into the db to ensure data has been flushed to disk
+    for i in 1000..2000 {
+        db.put(i.to_string(), "SomeValue".to_string())
+            .await
+            .unwrap();
+    }
+
+    let returned_value = db.get(&key).await.unwrap();
+    assert_eq!(returned_value, Some(value));
+
+    // test_clean_up(&path).await;
 }

@@ -105,7 +105,7 @@ impl BaumDb {
 
     // TODO accidental concurrent flushes must be avoided
     async fn maybe_flush_memtable(&mut self) -> Result<()> {
-        if self.read_table.len() >= self.max_memtable_size {
+        if self.rw_table.len() >= self.max_memtable_size {
             self.flush_memtable().await?;
         }
         Ok(())
