@@ -40,7 +40,13 @@ async fn test_basic_ops_with_many_keys() {
     let path = prepare_test().await;
     let mut db = BaumDb::new(&path, 2).await;
 
-    let key_values = vec![("A", "1"), ("B", "2"), ("C", "3"), ("D", "3"), ("E", "4")];
+    let key_values = vec![
+        ("Aa", "1"),
+        ("Bbb", "2"),
+        ("Cc", "3"),
+        ("Ddddd", "3"),
+        ("Eeeee", "4"),
+    ];
     for (key, value) in key_values.iter() {
         db.put(key.to_string(), value.to_string()).await.unwrap();
     }

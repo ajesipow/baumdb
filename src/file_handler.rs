@@ -1,4 +1,4 @@
-use crate::serialization::Serialize;
+use crate::serialization::{Serialize, SerializedTableData};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -16,7 +16,13 @@ pub(crate) trait FileHandling {
 #[derive(Debug)]
 pub(crate) struct SstFileHandler {
     sst_dir_path: PathBuf,
-    file_paths: Vec<PathBuf>,
+    file_paths: Vec<SstFileBundle>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SstFileBundle {
+    pub main_data_file_path: PathBuf,
+    pub index_file_path: PathBuf,
 }
 
 impl SstFileHandler {
@@ -31,17 +37,23 @@ impl SstFileHandler {
         }
     }
 
-    /// Returns the sstable file paths in the order of most recent to least recent.
-    pub(crate) fn file_paths(&self) -> Vec<PathBuf> {
+    /// Returns the SStable file paths in the order of most recent to least recent.
+    pub(crate) fn file_path_bundles(&self) -> Vec<SstFileBundle> {
         let mut paths = self.file_paths.clone();
         paths.reverse();
         paths
     }
 
-    fn new_file_path(&mut self) -> &Path {
-        let new_file_name = PathBuf::from(&format!("L0-data-{}.db", self.file_paths.len()));
-        let path = Path::join(&self.sst_dir_path, new_file_name);
-        self.file_paths.push(path);
+    fn new_file_path_bundle(&mut self) -> &SstFileBundle {
+        let main_data_file_name = PathBuf::from(&format!("L0-data-{}.db", self.file_paths.len()));
+        let index_file_name = PathBuf::from(&format!("L0-index-{}.db", self.file_paths.len()));
+        let main_data_file_path = Path::join(&self.sst_dir_path, main_data_file_name);
+        let index_file_path = Path::join(&self.sst_dir_path, index_file_name);
+
+        self.file_paths.push(SstFileBundle {
+            main_data_file_path,
+            index_file_path,
+        });
         self.file_paths.last().unwrap()
     }
 }
@@ -53,15 +65,23 @@ impl FileHandling for SstFileHandler {
         S: Serialize,
         S: Send,
     {
-        let blob = data.serialize();
-        let file_path = self.new_file_path();
-        let mut file = OpenOptions::new()
+        let SerializedTableData { main_data, offsets } = data.serialize();
+        let SstFileBundle {
+            main_data_file_path,
+            index_file_path,
+        } = self.new_file_path_bundle();
+        let mut main_data_file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(file_path)
+            .open(main_data_file_path)
             .await?;
-        file.write_all(&blob).await?;
-
+        main_data_file.write_all(&main_data).await?;
+        let mut index_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(index_file_path)
+            .await?;
+        index_file.write_all(&offsets).await?;
         Ok(())
     }
 }

@@ -1,13 +1,14 @@
-use crate::deserialization::read_value;
-use crate::file_handler::{FileHandling, SstFileHandler};
+use crate::deserialization::{read_key_offset, read_value};
+use crate::file_handler::{FileHandling, SstFileBundle, SstFileHandler};
 use crate::memtable::{MemTable, MemValue};
 use anyhow::Result;
 use async_trait::async_trait;
+use std::io::SeekFrom;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{create_dir, File};
-use tokio::io::BufReader;
+use tokio::io::{AsyncSeekExt, BufReader};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, RwLock};
 
@@ -35,6 +36,7 @@ pub struct BaumDb {
 #[async_trait]
 impl DB for BaumDb {
     async fn get(&self, key: &str) -> Result<Option<String>> {
+        println!(" --- looking for key: {:?}", key);
         if let Some(value) = self.main_table.get(key).await? {
             return Ok(Some(value));
         }
@@ -43,18 +45,32 @@ impl DB for BaumDb {
             Some(value) => Ok(Some(value)),
             None => {
                 let read_lock = self.file_handler.read().await;
-                let file_paths = read_lock.file_paths();
+                let file_path_bundles = read_lock.file_path_bundles();
                 drop(read_lock);
-                for file_path in file_paths {
-                    let file = File::open(file_path).await?;
-                    // TODO: implement proper deserialization
-                    let mut buffer = BufReader::new(file);
-                    while let Ok((existing_key, existing_value)) = read_value(&mut buffer).await {
-                        if existing_key == key {
-                            return match existing_value {
-                                MemValue::Put(existing_value_str) => Ok(Some(existing_value_str)),
-                                MemValue::Delete => Ok(None),
-                            };
+                for SstFileBundle {
+                    main_data_file_path,
+                    index_file_path,
+                } in file_path_bundles
+                {
+                    let index_file = File::open(index_file_path).await?;
+                    // TODO load entire index into memory
+                    let mut buffer = BufReader::new(index_file);
+                    while let Ok((indexed_key, offset)) = read_key_offset(&mut buffer).await {
+                        if indexed_key == key {
+                            let mut main_data_file = File::open(&main_data_file_path).await?;
+                            main_data_file.seek(SeekFrom::Start(offset)).await?;
+                            if let Ok((existing_key, existing_value)) =
+                                read_value(&mut main_data_file).await
+                            {
+                                if existing_key == key {
+                                    return match existing_value {
+                                        MemValue::Put(existing_value_str) => {
+                                            Ok(Some(existing_value_str))
+                                        }
+                                        MemValue::Delete => Ok(None),
+                                    };
+                                }
+                            }
                         }
                     }
                 }
