@@ -39,7 +39,7 @@ impl SstFileHandler {
     }
 
     fn new_file_path(&mut self) -> &Path {
-        let new_file_name = PathBuf::from(&format!("L0-{}.baum", self.file_paths.len()));
+        let new_file_name = PathBuf::from(&format!("L0-data-{}.db", self.file_paths.len()));
         let path = Path::join(&self.sst_dir_path, new_file_name);
         self.file_paths.push(path);
         self.file_paths.last().unwrap()

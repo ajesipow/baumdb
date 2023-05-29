@@ -1,9 +1,7 @@
 use baumdb::BaumDb;
 use baumdb::DB;
-use futures::future::join_all;
 use std::path::{Path, PathBuf};
 use tokio::fs::{create_dir_all, remove_dir_all};
-use tokio::join;
 use uuid::Uuid;
 
 static TEST_LOG_PATH: &str = "./test-logs";
