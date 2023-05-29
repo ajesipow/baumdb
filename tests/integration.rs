@@ -1,7 +1,9 @@
 use baumdb::BaumDb;
 use baumdb::DB;
+use futures::future::join_all;
 use std::path::{Path, PathBuf};
 use tokio::fs::{create_dir_all, remove_dir_all};
+use tokio::join;
 use uuid::Uuid;
 
 static TEST_LOG_PATH: &str = "./test-logs";
@@ -94,5 +96,5 @@ async fn test_updating_a_key_works() {
     let returned_value = db.get(&key).await.unwrap();
     assert_eq!(returned_value, Some(value));
 
-    // test_clean_up(&path).await;
+    test_clean_up(&path).await;
 }
