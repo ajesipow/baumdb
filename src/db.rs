@@ -1,12 +1,14 @@
+use crate::file_handler::{FileHandling, SstFileHandler};
 use crate::memtable::{MemTable, MemValue};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::mem;
 use std::path::{Path, PathBuf};
-use tokio::fs::{create_dir, read_dir};
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
-use uuid::Uuid;
+use std::sync::Arc;
+use tokio::fs::{create_dir, File};
+use tokio::io::{AsyncReadExt, BufReader};
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc, RwLock};
 
 #[async_trait]
 pub trait DB {
@@ -20,49 +22,38 @@ pub trait DB {
 #[derive(Debug)]
 pub struct BaumDb {
     // The main memtable for reading from and writing to.
-    rw_table: MemTable,
+    main_table: MemTable,
     // A secondary table that must only be read from. It is used to support reads while the main table
     // is flushed to disk.
-    read_table: MemTable,
+    secondary_table: MemTable,
     max_memtable_size: usize,
-    sst_dir_path: PathBuf,
+    file_handler: Arc<RwLock<SstFileHandler>>,
+    flush_sender: Sender<MemTable>,
 }
 
 #[async_trait]
 impl DB for BaumDb {
     async fn get(&self, key: &str) -> Result<Option<String>> {
-        if let Some(value) = self.rw_table.get(key).await? {
+        if let Some(value) = self.main_table.get(key).await? {
             return Ok(Some(value));
         }
-        match self.read_table.get(key).await? {
+        // Check the secondary table (representing the previous memtable)
+        match self.secondary_table.get(key).await? {
             Some(value) => Ok(Some(value)),
             None => {
-                // TODO check SSTables newest to oldest instead of just going over all files
-                // TODO Don't have to check
-                let mut stream = read_dir(&self.sst_dir_path).await?;
-                while let Some(entry) = stream.next_entry().await? {
-                    let path = entry.path();
-                    if !path.is_file() {
-                        continue;
-                    }
-                    if path
-                        .file_stem()
-                        .and_then(|stem| stem.to_str().map(|s| s.starts_with("L0-")))
-                        .unwrap_or(false)
-                    {
-                        let file = File::open(path).await?;
-                        // TODO: implement proper deserialization
-                        let mut buffer = BufReader::new(file);
-                        while let Ok((existing_key, existing_value)) = read_value(&mut buffer).await
-                        {
-                            if existing_key == key {
-                                match existing_value {
-                                    MemValue::Put(existing_value_str) => {
-                                        return Ok(Some(existing_value_str))
-                                    }
-                                    MemValue::Delete => (),
-                                }
-                            }
+                let read_lock = self.file_handler.read().await;
+                let file_paths = read_lock.file_paths();
+                drop(read_lock);
+                for file_path in file_paths {
+                    let file = File::open(file_path).await?;
+                    // TODO: implement proper deserialization
+                    let mut buffer = BufReader::new(file);
+                    while let Ok((existing_key, existing_value)) = read_value(&mut buffer).await {
+                        if existing_key == key {
+                            return match existing_value {
+                                MemValue::Put(existing_value_str) => Ok(Some(existing_value_str)),
+                                MemValue::Delete => Ok(None),
+                            };
                         }
                     }
                 }
@@ -72,13 +63,13 @@ impl DB for BaumDb {
     }
 
     async fn put(&mut self, key: String, value: String) -> Result<()> {
-        self.rw_table.put(key, value).await?;
+        self.main_table.put(key, value).await?;
         self.maybe_flush_memtable().await
     }
 
     async fn delete(&mut self, key: &str) -> Result<()> {
         // TODO handle read memtable
-        self.rw_table.delete(key).await?;
+        self.main_table.delete(key).await?;
         self.maybe_flush_memtable().await
     }
 }
@@ -95,17 +86,28 @@ impl BaumDb {
                 .await
                 .expect("be able to create directory");
         }
+        let file_handler = Arc::new(RwLock::new(SstFileHandler::new(path)));
+        let (tx, mut rx) = mpsc::channel(1);
+        let file_handler_clone = file_handler.clone();
+        tokio::spawn(async move {
+            while let Some(memtable) = rx.recv().await {
+                let mut lock = file_handler_clone.write().await;
+                let _ = lock.flush(memtable).await;
+                drop(lock)
+            }
+        });
+
         Self {
-            rw_table: Default::default(),
-            read_table: Default::default(),
+            main_table: Default::default(),
+            secondary_table: Default::default(),
             max_memtable_size,
-            sst_dir_path: path,
+            file_handler,
+            flush_sender: tx,
         }
     }
 
-    // TODO accidental concurrent flushes must be avoided
     async fn maybe_flush_memtable(&mut self) -> Result<()> {
-        if self.rw_table.len() >= self.max_memtable_size {
+        if self.main_table.len() >= self.max_memtable_size {
             self.flush_memtable().await?;
         }
         Ok(())
@@ -113,48 +115,10 @@ impl BaumDb {
 
     async fn flush_memtable(&mut self) -> Result<()> {
         // Can be safely reset because it only contains data that has already been flushed to disk
-        self.read_table = Default::default();
-        mem::swap(&mut self.read_table, &mut self.rw_table);
-        let previous_memtable = self.read_table.clone();
-        // TODO: logic for file naming
-        // TODO: error handling of file writing?
-        tokio::task::spawn(Self::flush_memtable_inner(
-            self.sst_dir_path.to_path_buf(),
-            previous_memtable,
-        ));
-        Ok(())
-    }
-
-    async fn flush_memtable_inner(
-        mut file_path: PathBuf,
-        previous_memtable: MemTable,
-    ) -> Result<()> {
-        let file_name = format!("L0-{}.baum", Uuid::new_v4());
-        file_path.push(file_name);
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(file_path)
-            .await?;
-        let mut buffer = BufWriter::new(file);
-        for (key, value) in previous_memtable {
-            // TODO: implement proper serialization
-            // Encode the key length and value length first for easier parsing
-            let key_len = key.len() as u64;
-            buffer.write_u64(key_len).await?;
-            buffer.write_all(key.as_bytes()).await?;
-            match value {
-                MemValue::Delete => {
-                    buffer.write_u8(0).await?;
-                }
-                MemValue::Put(value_str) => {
-                    buffer.write_u8(1).await?;
-                    buffer.write_u64(value_str.len() as u64).await?;
-                    buffer.write_all(value_str.as_bytes()).await?;
-                }
-            }
-        }
-        buffer.flush().await?;
+        self.secondary_table = Default::default();
+        mem::swap(&mut self.secondary_table, &mut self.main_table);
+        let previous_memtable = self.secondary_table.clone();
+        self.flush_sender.send(previous_memtable).await?;
         Ok(())
     }
 }

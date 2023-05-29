@@ -31,6 +31,7 @@ impl IntoIterator for MemTable {
     }
 }
 
+// TODO really needed?
 #[async_trait]
 impl DB for MemTable {
     async fn get(&self, key: &str) -> Result<Option<String>> {

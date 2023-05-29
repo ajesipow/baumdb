@@ -7,7 +7,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod db;
+mod file_handler;
 mod memtable;
+mod serialization;
 
 pub use db::BaumDb;
 pub use db::DB;

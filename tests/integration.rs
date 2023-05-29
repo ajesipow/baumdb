@@ -54,7 +54,6 @@ async fn test_basic_ops_with_many_keys() {
         db.delete(key).await.unwrap();
     }
 
-    // FIXME: we find old values here because we don't look at newest to oldest SSTables in L0
     for (key, _) in key_values {
         let returned_value = db.get(key).await.unwrap();
         assert!(returned_value.is_none());
