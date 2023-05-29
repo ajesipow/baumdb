@@ -25,8 +25,9 @@ pub trait DB {
 pub struct BaumDb {
     // The main memtable for reading from and writing to.
     main_table: MemTable,
-    // A secondary table that must only be read from. It is used to support reads while the main table
-    // is flushed to disk.
+    // A secondary table that can only be read from.
+    // It is corresponds to the previous main table and is needed to support
+    // reads while the previous main table is still flushed to disk.
     secondary_table: MemTableReadOnly,
     max_memtable_size: usize,
     file_handler: Arc<RwLock<SstFileHandler>>,

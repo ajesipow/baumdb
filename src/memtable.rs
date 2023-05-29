@@ -12,9 +12,11 @@ pub(crate) enum MemValue {
 
 type MemTableBase = BTreeMap<String, MemValue>;
 
+/// The main MemTable struct.
 #[derive(Default, Debug, Clone)]
 pub(crate) struct MemTable(MemTableBase);
 
+/// A secondary MemTable struct that only allows reading from.
 #[derive(Default, Debug, Clone)]
 pub(crate) struct MemTableReadOnly(MemTableBase);
 
