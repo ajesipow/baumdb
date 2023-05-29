@@ -1,12 +1,7 @@
 use crate::memtable::{MemTable, MemValue};
-use anyhow::Result;
 
 pub(crate) trait Serialize {
     fn serialize(self) -> Vec<u8>;
-}
-
-pub(crate) trait Deserialize: Sized {
-    fn deserialize(&self) -> Result<Self>;
 }
 
 impl Serialize for MemTable {

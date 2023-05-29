@@ -1,12 +1,13 @@
+use crate::deserialization::read_value;
 use crate::file_handler::{FileHandling, SstFileHandler};
 use crate::memtable::{MemTable, MemValue};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{create_dir, File};
-use tokio::io::{AsyncReadExt, BufReader};
+use tokio::io::BufReader;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, RwLock};
 
@@ -120,24 +121,5 @@ impl BaumDb {
         let previous_memtable = self.secondary_table.clone();
         self.flush_sender.send(previous_memtable).await?;
         Ok(())
-    }
-}
-
-async fn read_value(file_buffer: &mut BufReader<File>) -> Result<(String, MemValue)> {
-    let key_len = file_buffer.read_u64().await? as usize;
-    let mut buf: Vec<u8> = vec![0; key_len];
-    let _n = file_buffer.read_exact(&mut buf).await?;
-    let key = String::from_utf8(buf)?;
-    let value_type = file_buffer.read_u8().await?;
-    match value_type {
-        0 => Ok((key, MemValue::Delete)),
-        1 => {
-            let value_len = file_buffer.read_u64().await? as usize;
-            let mut buf: Vec<u8> = vec![0; value_len];
-            let _n = file_buffer.read_exact(&mut buf).await?;
-            let value = String::from_utf8(buf)?;
-            Ok((key, MemValue::Put(value)))
-        }
-        _ => Err(anyhow!("Wrong value type byte: {value_type}")),
     }
 }

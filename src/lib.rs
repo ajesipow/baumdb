@@ -7,6 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod db;
+mod deserialization;
 mod file_handler;
 mod memtable;
 mod serialization;
