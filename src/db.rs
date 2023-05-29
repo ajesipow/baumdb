@@ -1,6 +1,6 @@
 use crate::deserialization::{read_key_offset, read_value};
 use crate::file_handler::{FileHandling, SstFileBundle, SstFileHandler};
-use crate::memtable::{MemTable, MemValue};
+use crate::memtable::{MemTable, MemTableRead, MemTableReadOnly, MemTableWrite, MemValue};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::io::SeekFrom;
@@ -27,7 +27,7 @@ pub struct BaumDb {
     main_table: MemTable,
     // A secondary table that must only be read from. It is used to support reads while the main table
     // is flushed to disk.
-    secondary_table: MemTable,
+    secondary_table: MemTableReadOnly,
     max_memtable_size: usize,
     file_handler: Arc<RwLock<SstFileHandler>>,
     flush_sender: Sender<MemTable>,
@@ -36,7 +36,6 @@ pub struct BaumDb {
 #[async_trait]
 impl DB for BaumDb {
     async fn get(&self, key: &str) -> Result<Option<String>> {
-        println!(" --- looking for key: {:?}", key);
         if let Some(value) = self.main_table.get(key).await? {
             return Ok(Some(value));
         }
@@ -47,13 +46,14 @@ impl DB for BaumDb {
                 let read_lock = self.file_handler.read().await;
                 let file_path_bundles = read_lock.file_path_bundles();
                 drop(read_lock);
+                // TODO can skip first SStable (because it is equivalent to secondary table)
                 for SstFileBundle {
                     main_data_file_path,
                     index_file_path,
                 } in file_path_bundles
                 {
                     let index_file = File::open(index_file_path).await?;
-                    // TODO load entire index into memory
+                    // TODO load entire index into memory?
                     let mut buffer = BufReader::new(index_file);
                     while let Ok((indexed_key, offset)) = read_key_offset(&mut buffer).await {
                         if indexed_key == key {
@@ -132,9 +132,9 @@ impl BaumDb {
 
     async fn flush_memtable(&mut self) -> Result<()> {
         // Can be safely reset because it only contains data that has already been flushed to disk
-        self.secondary_table = Default::default();
-        mem::swap(&mut self.secondary_table, &mut self.main_table);
-        let previous_memtable = self.secondary_table.clone();
+        let mut previous_memtable = Default::default();
+        mem::swap(&mut previous_memtable, &mut self.main_table);
+        self.secondary_table = previous_memtable.clone().into();
         self.flush_sender.send(previous_memtable).await?;
         Ok(())
     }
