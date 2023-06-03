@@ -15,11 +15,11 @@ c-clippy:
 
 # Run the fmt check
 c-fmt: update-nightly-fmt
-	cargo +nightly-2023-04-16 fmt --all -- --check
+	cargo +nightly-2023-05-31 fmt --all -- --check
 
 # Format the code
 format: update-nightly-fmt
-	cargo +nightly-2023-04-16 fmt --all
+	cargo +nightly-2023-05-31 fmt --all
 
 # Run all tests
 test:
@@ -28,5 +28,5 @@ test:
 
 # Installs/updates the nightly rustfmt installation
 update-nightly-fmt:
-	rustup toolchain install --profile minimal nightly-2023-04-16 --no-self-update
-	rustup component add rustfmt --toolchain nightly-2023-04-16
+	rustup toolchain install --profile minimal nightly-2023-05-31 --no-self-update
+	rustup component add rustfmt --toolchain nightly-2023-05-31
