@@ -3,12 +3,16 @@ use crate::file_handler::{FileHandling, SstFileBundle, SstFileHandler};
 use crate::memtable::{MemTable, MemTableRead, MemTableReadOnly, MemTableWrite, MemValue};
 use anyhow::Result;
 use async_trait::async_trait;
+use flate2::read::GzDecoder;
+use std::collections::BTreeMap;
 use std::io::SeekFrom;
+use std::io::{Cursor, Read};
 use std::mem;
+use std::ops::Bound::{Included, Unbounded};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{create_dir, File};
-use tokio::io::{AsyncSeekExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, RwLock};
 
@@ -53,24 +57,51 @@ impl DB for BaumDb {
                     index_file_path,
                 } in file_path_bundles
                 {
-                    let index_file = File::open(index_file_path).await?;
-                    // TODO load entire index into memory?
-                    let mut buffer = BufReader::new(index_file);
-                    while let Ok((indexed_key, offset)) = read_key_offset(&mut buffer).await {
-                        if indexed_key == key {
-                            let mut main_data_file = File::open(&main_data_file_path).await?;
-                            main_data_file.seek(SeekFrom::Start(offset)).await?;
-                            if let Ok((existing_key, existing_value)) =
-                                read_value(&mut main_data_file).await
-                            {
-                                if existing_key == key {
-                                    return match existing_value {
-                                        MemValue::Put(existing_value_str) => {
-                                            Ok(Some(existing_value_str))
-                                        }
-                                        MemValue::Delete => Ok(None),
-                                    };
-                                }
+                    let mut index_file = File::open(index_file_path).await?;
+                    let mut index_as_bytes = Vec::<u8>::new();
+                    index_file.read_to_end(&mut index_as_bytes).await?;
+                    let mut index_map = BTreeMap::<String, u64>::new();
+                    let mut cursor = Cursor::new(index_as_bytes);
+                    while let Ok((indexed_key, offset)) = read_key_offset(&mut cursor) {
+                        index_map.insert(indexed_key, offset);
+                    }
+                    // TODO: ugly find a better solution for the `.to_string()`s here and below
+                    let previous_range = index_map.range((Unbounded, Included(key.to_string())));
+                    let mut next_range = index_map.range((Included(key.to_string()), Unbounded));
+                    if let Some((_, offset)) = previous_range.last().or(next_range.next()) {
+                        let mut main_data_file = File::open(&main_data_file_path).await?;
+                        main_data_file.seek(SeekFrom::Start(*offset)).await?;
+
+                        let raw_block = match next_range.next() {
+                            Some((_, next_offset)) => {
+                                let n_bytes_to_read = (next_offset - offset) as usize;
+                                let mut raw_block = vec![0; n_bytes_to_read];
+                                main_data_file.read_exact(&mut raw_block).await?;
+                                raw_block
+                            }
+                            None => {
+                                let mut raw_block = vec![];
+                                main_data_file.read_to_end(&mut raw_block).await?;
+                                raw_block
+                            }
+                        };
+
+                        let mut decoder = GzDecoder::new(raw_block.as_slice());
+                        // The vec will very likely end up larger than the `n_bytes_to_read`,
+                        // but that's the best we know at this point and it'll save some reallocations.
+                        let mut decompressed_block = Vec::with_capacity(raw_block.len());
+                        decoder.read_to_end(&mut decompressed_block)?;
+                        let mut decompressed_cursor = Cursor::new(decompressed_block);
+                        while let Ok((existing_key, existing_value)) =
+                            read_value(&mut decompressed_cursor)
+                        {
+                            if existing_key == key {
+                                return match existing_value {
+                                    MemValue::Put(existing_value_str) => {
+                                        Ok(Some(existing_value_str))
+                                    }
+                                    MemValue::Delete => Ok(None),
+                                };
                             }
                         }
                     }

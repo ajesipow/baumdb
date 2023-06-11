@@ -1,23 +1,22 @@
 use crate::memtable::MemValue;
 use anyhow::{anyhow, Result};
-use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
+use byteorder::{BigEndian, ReadBytesExt};
+use std::io::Cursor;
+use std::io::Read;
 
-pub(crate) async fn read_value<R>(reader: &mut R) -> Result<(String, MemValue)>
-where
-    R: AsyncRead,
-    R: Unpin,
-{
-    let key_len = reader.read_u64().await? as usize;
+// FIXME: make this nicer?
+pub(crate) fn read_value(reader: &mut Cursor<Vec<u8>>) -> Result<(String, MemValue)> {
+    let key_len = reader.read_u64::<BigEndian>()? as usize;
     let mut buf: Vec<u8> = vec![0; key_len];
-    let _n = reader.read_exact(&mut buf).await?;
+    reader.read_exact(&mut buf)?;
     let key = String::from_utf8(buf)?;
-    let value_type = reader.read_u8().await?;
+    let value_type = reader.read_u8()?;
     match value_type {
         0 => Ok((key, MemValue::Delete)),
         1 => {
-            let value_len = reader.read_u64().await? as usize;
+            let value_len = reader.read_u64::<BigEndian>()? as usize;
             let mut buf: Vec<u8> = vec![0; value_len];
-            let _n = reader.read_exact(&mut buf).await?;
+            reader.read_exact(&mut buf)?;
             let value = String::from_utf8(buf)?;
             Ok((key, MemValue::Put(value)))
         }
@@ -25,16 +24,13 @@ where
     }
 }
 
-pub(crate) async fn read_key_offset<R>(buffer: &mut BufReader<R>) -> Result<(String, u64)>
-where
-    R: AsyncRead,
-    R: Unpin,
-{
-    let key_len = buffer.read_u64().await? as usize;
+// FIXME: make this nicer?
+pub(crate) fn read_key_offset(buffer: &mut Cursor<Vec<u8>>) -> Result<(String, u64)> {
+    let key_len = buffer.read_u64::<BigEndian>()? as usize;
     let mut buf: Vec<u8> = vec![0; key_len];
-    let _n = buffer.read_exact(&mut buf).await?;
+    buffer.read_exact(&mut buf)?;
     let key = String::from_utf8(buf)?;
-    let offset = buffer.read_u64().await?;
+    let offset = buffer.read_u64::<BigEndian>()?;
     Ok((key, offset))
 }
 
@@ -53,8 +49,8 @@ mod tests {
         // Delete is encoded as 0
         bytes.push(0);
 
-        let mut buffer = BufReader::new(bytes.as_slice());
-        let (extracted_key, extracted_value) = read_value(&mut buffer).await.unwrap();
+        let mut cursor = Cursor::new(bytes);
+        let (extracted_key, extracted_value) = read_value(&mut cursor).unwrap();
         assert_eq!(&extracted_key, key);
         assert_eq!(extracted_value, value);
     }
@@ -73,8 +69,8 @@ mod tests {
         bytes.extend(value_inner.len().to_be_bytes());
         bytes.extend(value_inner.as_bytes());
 
-        let mut buffer = BufReader::new(bytes.as_slice());
-        let (extracted_key, extracted_value) = read_value(&mut buffer).await.unwrap();
+        let mut cursor = Cursor::new(bytes);
+        let (extracted_key, extracted_value) = read_value(&mut cursor).unwrap();
         assert_eq!(&extracted_key, key);
         assert_eq!(extracted_value, value);
     }
