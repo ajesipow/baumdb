@@ -4,11 +4,9 @@ use crate::memtable::{MemTable, MemTableRead, MemTableReadOnly, MemTableWrite, M
 use anyhow::Result;
 use async_trait::async_trait;
 use flate2::read::GzDecoder;
-use std::collections::BTreeMap;
 use std::io::SeekFrom;
 use std::io::{Cursor, Read};
 use std::mem;
-use std::ops::Bound::{Included, Unbounded};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs::{create_dir, File};
@@ -60,19 +58,22 @@ impl DB for BaumDb {
                     let mut index_file = File::open(index_file_path).await?;
                     let mut index_as_bytes = Vec::<u8>::new();
                     index_file.read_to_end(&mut index_as_bytes).await?;
-                    let mut index_map = BTreeMap::<String, u64>::new();
+
+                    // Invariant here is that the index is already sorted
+                    // TODO: we're over-allocating here - is there a better way?
+                    let mut index_vec = Vec::with_capacity(index_as_bytes.len());
                     let mut cursor = Cursor::new(index_as_bytes);
                     while let Ok((indexed_key, offset)) = read_key_offset(&mut cursor) {
-                        index_map.insert(indexed_key, offset);
+                        index_vec.push((indexed_key, offset));
                     }
-                    // TODO: ugly find a better solution for the `.to_string()`s here and below
-                    let previous_range = index_map.range((Unbounded, Included(key.to_string())));
-                    let mut next_range = index_map.range((Included(key.to_string()), Unbounded));
-                    if let Some((_, offset)) = previous_range.last().or(next_range.next()) {
+                    let mut index_iter = index_vec.iter().peekable();
+                    if let Some((_idx, offset)) = index_iter
+                        .next_if(|(idx, _)| idx.as_str() < key)
+                        .or_else(|| index_iter.next())
+                    {
                         let mut main_data_file = File::open(&main_data_file_path).await?;
                         main_data_file.seek(SeekFrom::Start(*offset)).await?;
-
-                        let raw_block = match next_range.next() {
+                        let raw_block = match index_iter.next() {
                             Some((_, next_offset)) => {
                                 let n_bytes_to_read = (next_offset - offset) as usize;
                                 let mut raw_block = vec![0; n_bytes_to_read];
