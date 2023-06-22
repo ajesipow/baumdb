@@ -1,4 +1,5 @@
 use crate::memtable::{MemTable, MemValue};
+use anyhow::Result;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io::Write;
@@ -11,7 +12,7 @@ pub(crate) struct SerializedTableData {
 }
 
 pub(crate) trait Serialize {
-    fn serialize(self) -> SerializedTableData;
+    fn serialize(self) -> Result<SerializedTableData>;
 }
 
 #[derive(Debug)]
@@ -34,11 +35,11 @@ impl SerializedFoldState {
 }
 
 impl Serialize for MemTable {
-    fn serialize(self) -> SerializedTableData {
+    fn serialize(self) -> Result<SerializedTableData> {
         let n_elements = self.len();
-        let fold_result = self.into_iter().enumerate().fold(
+        let fold_result = self.into_iter().enumerate().try_fold(
             SerializedFoldState::new(),
-            |mut state, (idx, (key, value))| {
+            |mut state, (idx, (key, value))| -> Result<_> {
                 // Encode the key length and value length first for easier parsing
                 let key_len = key.len() as u64;
                 let key_len_bytes = key_len.to_be_bytes();
@@ -49,19 +50,18 @@ impl Serialize for MemTable {
                     state.table_data.offsets.extend(key_bytes);
                 }
 
-                // FIXME handle errors
-                state.encoded_bytes += state.encoder.write(&key_len_bytes).unwrap();
-                state.encoded_bytes += state.encoder.write(key_bytes).unwrap();
+                state.encoded_bytes += state.encoder.write(&key_len_bytes)?;
+                state.encoded_bytes += state.encoder.write(key_bytes)?;
 
                 match value {
                     MemValue::Delete => {
-                        state.encoded_bytes += state.encoder.write(&[0]).unwrap();
+                        state.encoded_bytes += state.encoder.write(&[0])?;
                     }
                     MemValue::Put(value_str) => {
-                        state.encoded_bytes += state.encoder.write(&[1]).unwrap();
+                        state.encoded_bytes += state.encoder.write(&[1])?;
                         state.encoded_bytes +=
-                            state.encoder.write(&value_str.len().to_be_bytes()).unwrap();
-                        state.encoded_bytes += state.encoder.write(value_str.as_bytes()).unwrap();
+                            state.encoder.write(&value_str.len().to_be_bytes())?;
+                        state.encoded_bytes += state.encoder.write(value_str.as_bytes())?;
                     }
                 };
 
@@ -71,7 +71,7 @@ impl Serialize for MemTable {
                     mem::swap(&mut state.encoder, &mut encoder);
                     state.encoded_bytes = 0;
 
-                    let encoded_data = encoder.finish().unwrap();
+                    let encoded_data = encoder.finish()?;
                     let encoded_len = encoded_data.len();
                     state.table_data.main_data.extend(encoded_data);
                     state
@@ -80,9 +80,9 @@ impl Serialize for MemTable {
                         .extend((state.offset_counter as u64).to_be_bytes());
                     state.offset_counter += encoded_len
                 }
-                state
+                Ok(state)
             },
-        );
-        fold_result.table_data
+        )?;
+        Ok(fold_result.table_data)
     }
 }

@@ -65,7 +65,7 @@ impl FileHandling for SstFileHandler {
         S: Serialize,
         S: Send,
     {
-        let SerializedTableData { main_data, offsets } = data.serialize();
+        let SerializedTableData { main_data, offsets } = data.serialize()?;
         let SstFileBundle {
             main_data_file_path,
             index_file_path,
