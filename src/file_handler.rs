@@ -1,6 +1,7 @@
 use crate::serialization::{Serialize, SerializedTableData};
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
@@ -16,7 +17,7 @@ pub(crate) trait FileHandling {
 #[derive(Debug)]
 pub(crate) struct SstFileHandler {
     sst_dir_path: PathBuf,
-    file_paths: Vec<SstFileBundle>,
+    file_paths: VecDeque<SstFileBundle>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,15 +34,13 @@ impl SstFileHandler {
     {
         Self {
             sst_dir_path: path.into(),
-            file_paths: Vec::new(),
+            file_paths: VecDeque::new(),
         }
     }
 
     /// Returns the SStable file paths in the order of most recent to least recent.
-    pub(crate) fn file_path_bundles(&self) -> Vec<SstFileBundle> {
-        let mut paths = self.file_paths.clone();
-        paths.reverse();
-        paths
+    pub(crate) fn file_path_bundles(&self) -> &VecDeque<SstFileBundle> {
+        &self.file_paths
     }
 
     fn new_file_path_bundle(&mut self) -> &SstFileBundle {
@@ -50,11 +49,11 @@ impl SstFileHandler {
         let main_data_file_path = Path::join(&self.sst_dir_path, main_data_file_name);
         let index_file_path = Path::join(&self.sst_dir_path, index_file_name);
 
-        self.file_paths.push(SstFileBundle {
+        self.file_paths.push_front(SstFileBundle {
             main_data_file_path,
             index_file_path,
         });
-        self.file_paths.last().unwrap()
+        self.file_paths.front().unwrap()
     }
 }
 

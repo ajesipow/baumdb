@@ -47,9 +47,10 @@ impl DB for BaumDb {
             Some(value) => Ok(Some(value)),
             None => {
                 let read_lock = self.file_handler.read().await;
-                let file_path_bundles = read_lock.file_path_bundles();
+                let file_path_bundles = read_lock.file_path_bundles().clone();
                 drop(read_lock);
                 // TODO can skip first SStable (because it is equivalent to secondary table)
+                // But need to make sure no tables are currently flushed
                 for SstFileBundle {
                     main_data_file_path,
                     index_file_path,
