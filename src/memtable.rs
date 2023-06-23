@@ -1,5 +1,4 @@
 use anyhow::Result;
-use async_trait::async_trait;
 use std::collections::BTreeMap;
 
 #[non_exhaustive]
@@ -23,7 +22,7 @@ pub(crate) struct MemTableReadOnly(MemTableBase);
 impl MemTable {
     /// The size of the MemTable
     pub(crate) fn len(&self) -> usize {
-        // TODO adjust this to take the effective size of the table into account, not just the
+        // TODO adjust this to take the value size of the table into account, not just the
         // number of entries.
         self.0.len()
     }
@@ -47,40 +46,35 @@ impl IntoIterator for MemTableReadOnly {
     }
 }
 
-#[async_trait]
 pub(crate) trait MemTableRead {
-    async fn get(&self, key: &str) -> Result<Option<String>>;
+    fn get(&self, key: &str) -> Result<Option<String>>;
 }
 
-#[async_trait]
 impl MemTableRead for MemTable {
-    async fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(&self, key: &str) -> Result<Option<String>> {
         memtable_get_inner(&self.0, key)
     }
 }
 
-#[async_trait]
 impl MemTableRead for MemTableReadOnly {
-    async fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(&self, key: &str) -> Result<Option<String>> {
         memtable_get_inner(&self.0, key)
     }
 }
 
-#[async_trait]
 pub(crate) trait MemTableWrite {
-    async fn put(&mut self, key: String, value: String) -> Result<()>;
+    fn put(&mut self, key: String, value: String) -> Result<()>;
 
-    async fn delete(&mut self, key: &str) -> Result<()>;
+    fn delete(&mut self, key: &str) -> Result<()>;
 }
 
-#[async_trait]
 impl MemTableWrite for MemTable {
-    async fn put(&mut self, key: String, value: String) -> Result<()> {
+    fn put(&mut self, key: String, value: String) -> Result<()> {
         self.0.insert(key, MemValue::Put(value));
         Ok(())
     }
 
-    async fn delete(&mut self, key: &str) -> Result<()> {
+    fn delete(&mut self, key: &str) -> Result<()> {
         if self.0.remove(key).is_none() {
             // Key was not present in the memtable, but may be present in the SSTables on disk, so
             // let's add a tombstone just in case.

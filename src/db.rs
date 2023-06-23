@@ -39,11 +39,11 @@ pub struct BaumDb {
 #[async_trait]
 impl DB for BaumDb {
     async fn get(&self, key: &str) -> Result<Option<String>> {
-        if let Some(value) = self.main_table.get(key).await? {
+        if let Some(value) = self.main_table.get(key)? {
             return Ok(Some(value));
         }
         // Check the secondary table (representing the previous memtable)
-        match self.secondary_table.get(key).await? {
+        match self.secondary_table.get(key)? {
             Some(value) => Ok(Some(value)),
             None => {
                 let read_lock = self.file_handler.read().await;
@@ -114,13 +114,12 @@ impl DB for BaumDb {
     }
 
     async fn put(&mut self, key: String, value: String) -> Result<()> {
-        self.main_table.put(key, value).await?;
+        self.main_table.put(key, value)?;
         self.maybe_flush_memtable().await
     }
 
     async fn delete(&mut self, key: &str) -> Result<()> {
-        // TODO handle read memtable
-        self.main_table.delete(key).await?;
+        self.main_table.delete(key)?;
         self.maybe_flush_memtable().await
     }
 }
