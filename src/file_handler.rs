@@ -24,6 +24,7 @@ pub(crate) struct SstFileHandler {
 pub(crate) struct SstFileBundle {
     pub main_data_file_path: PathBuf,
     pub index_file_path: PathBuf,
+    pub bloom_filter_file_path: PathBuf,
 }
 
 impl SstFileHandler {
@@ -46,12 +47,16 @@ impl SstFileHandler {
     fn new_file_path_bundle(&mut self) -> &SstFileBundle {
         let main_data_file_name = PathBuf::from(&format!("L0-data-{}.db", self.file_paths.len()));
         let index_file_name = PathBuf::from(&format!("L0-index-{}.db", self.file_paths.len()));
+        let bloom_filter_file_name =
+            PathBuf::from(&format!("L0-bloom-{}.db", self.file_paths.len()));
         let main_data_file_path = Path::join(&self.sst_dir_path, main_data_file_name);
         let index_file_path = Path::join(&self.sst_dir_path, index_file_name);
+        let bloom_filter_file_path = Path::join(&self.sst_dir_path, bloom_filter_file_name);
 
         self.file_paths.push_front(SstFileBundle {
             main_data_file_path,
             index_file_path,
+            bloom_filter_file_path,
         });
         self.file_paths.front().unwrap()
     }
@@ -64,10 +69,15 @@ impl FileHandling for SstFileHandler {
         S: Serialize,
         S: Send,
     {
-        let SerializedTableData { main_data, offsets } = data.serialize()?;
+        let SerializedTableData {
+            main_data,
+            offsets,
+            bloom_filter,
+        } = data.serialize()?;
         let SstFileBundle {
             main_data_file_path,
             index_file_path,
+            bloom_filter_file_path,
         } = self.new_file_path_bundle();
         let mut main_data_file = OpenOptions::new()
             .write(true)
@@ -81,6 +91,14 @@ impl FileHandling for SstFileHandler {
             .open(index_file_path)
             .await?;
         index_file.write_all(&offsets).await?;
+        let mut bloom_filter_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(bloom_filter_file_path)
+            .await?;
+        // FIXME: also encode the filter params here
+        let bloom_bytes: Vec<u8> = bloom_filter.into();
+        bloom_filter_file.write_all(&bloom_bytes).await?;
         Ok(())
     }
 }

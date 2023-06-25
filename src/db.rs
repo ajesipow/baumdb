@@ -1,3 +1,4 @@
+use crate::bloom_filter::{BloomFilter, DefaultBloomFilter};
 use crate::deserialization::{read_key_offset, read_value};
 use crate::file_handler::{FileHandling, SstFileBundle, SstFileHandler};
 use crate::memtable::{MemTable, MemTableRead, MemTableReadOnly, MemTableWrite, MemValue};
@@ -54,56 +55,65 @@ impl DB for BaumDb {
                 for SstFileBundle {
                     main_data_file_path,
                     index_file_path,
+                    bloom_filter_file_path,
                 } in file_path_bundles
                 {
-                    let mut index_file = File::open(index_file_path).await?;
-                    let mut index_as_bytes = Vec::<u8>::new();
-                    index_file.read_to_end(&mut index_as_bytes).await?;
+                    let mut bloom_filter_file = File::open(bloom_filter_file_path).await?;
+                    let mut bloom_filter_bytes = Vec::<u8>::new();
+                    bloom_filter_file
+                        .read_to_end(&mut bloom_filter_bytes)
+                        .await?;
+                    let bloom_filter = DefaultBloomFilter::try_from(bloom_filter_bytes)?;
+                    if bloom_filter.may_contain_key(key) {
+                        let mut index_file = File::open(index_file_path).await?;
+                        let mut index_as_bytes = Vec::<u8>::new();
+                        index_file.read_to_end(&mut index_as_bytes).await?;
 
-                    // Invariant here is that the index is already sorted
-                    // TODO: we're over-allocating here - is there a better way?
-                    let mut index_vec = Vec::with_capacity(index_as_bytes.len());
-                    let mut cursor = Cursor::new(index_as_bytes);
-                    while let Ok((indexed_key, offset)) = read_key_offset(&mut cursor) {
-                        index_vec.push((indexed_key, offset));
-                    }
-                    let mut index_iter = index_vec.iter().peekable();
-                    if let Some((_idx, offset)) = index_iter
-                        .next_if(|(idx, _)| idx.as_str() < key)
-                        .or_else(|| index_iter.next())
-                    {
-                        let mut main_data_file = File::open(&main_data_file_path).await?;
-                        main_data_file.seek(SeekFrom::Start(*offset)).await?;
-                        let raw_block = match index_iter.next() {
-                            Some((_, next_offset)) => {
-                                let n_bytes_to_read = (next_offset - offset) as usize;
-                                let mut raw_block = vec![0; n_bytes_to_read];
-                                main_data_file.read_exact(&mut raw_block).await?;
-                                raw_block
-                            }
-                            None => {
-                                let mut raw_block = vec![];
-                                main_data_file.read_to_end(&mut raw_block).await?;
-                                raw_block
-                            }
-                        };
-
-                        let mut decoder = GzDecoder::new(raw_block.as_slice());
-                        // The vec will very likely end up larger than the `n_bytes_to_read`,
-                        // but that's the best we know at this point and it'll save some reallocations.
-                        let mut decompressed_block = Vec::with_capacity(raw_block.len());
-                        decoder.read_to_end(&mut decompressed_block)?;
-                        let mut decompressed_cursor = Cursor::new(decompressed_block);
-                        while let Ok((existing_key, existing_value)) =
-                            read_value(&mut decompressed_cursor)
+                        // Invariant here is that the index is already sorted
+                        // TODO: we're over-allocating here - is there a better way?
+                        let mut index_vec = Vec::with_capacity(index_as_bytes.len());
+                        let mut cursor = Cursor::new(index_as_bytes);
+                        while let Ok((indexed_key, offset)) = read_key_offset(&mut cursor) {
+                            index_vec.push((indexed_key, offset));
+                        }
+                        let mut index_iter = index_vec.iter().peekable();
+                        if let Some((_idx, offset)) = index_iter
+                            .next_if(|(idx, _)| idx.as_str() < key)
+                            .or_else(|| index_iter.next())
                         {
-                            if existing_key == key {
-                                return match existing_value {
-                                    MemValue::Put(existing_value_str) => {
-                                        Ok(Some(existing_value_str))
-                                    }
-                                    MemValue::Delete => Ok(None),
-                                };
+                            let mut main_data_file = File::open(&main_data_file_path).await?;
+                            main_data_file.seek(SeekFrom::Start(*offset)).await?;
+                            let raw_block = match index_iter.next() {
+                                Some((_, next_offset)) => {
+                                    let n_bytes_to_read = (next_offset - offset) as usize;
+                                    let mut raw_block = vec![0; n_bytes_to_read];
+                                    main_data_file.read_exact(&mut raw_block).await?;
+                                    raw_block
+                                }
+                                None => {
+                                    let mut raw_block = vec![];
+                                    main_data_file.read_to_end(&mut raw_block).await?;
+                                    raw_block
+                                }
+                            };
+
+                            let mut decoder = GzDecoder::new(raw_block.as_slice());
+                            // The vec will very likely end up larger than the `n_bytes_to_read`,
+                            // but that's the best we know at this point and it'll save some reallocations.
+                            let mut decompressed_block = Vec::with_capacity(raw_block.len());
+                            decoder.read_to_end(&mut decompressed_block)?;
+                            let mut decompressed_cursor = Cursor::new(decompressed_block);
+                            while let Ok((existing_key, existing_value)) =
+                                read_value(&mut decompressed_cursor)
+                            {
+                                if existing_key == key {
+                                    return match existing_value {
+                                        MemValue::Put(existing_value_str) => {
+                                            Ok(Some(existing_value_str))
+                                        }
+                                        MemValue::Delete => Ok(None),
+                                    };
+                                }
                             }
                         }
                     }

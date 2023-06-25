@@ -1,3 +1,4 @@
+use crate::bloom_filter::{BloomFilter, DefaultBloomFilter};
 use crate::memtable::{MemTable, MemValue};
 use anyhow::Result;
 use flate2::write::GzEncoder;
@@ -9,6 +10,7 @@ use std::mem;
 pub(crate) struct SerializedTableData {
     pub main_data: Vec<u8>,
     pub offsets: Vec<u8>,
+    pub bloom_filter: DefaultBloomFilter,
 }
 
 pub(crate) trait Serialize {
@@ -44,6 +46,7 @@ impl Serialize for MemTable {
                 let key_len = key.len() as u64;
                 let key_len_bytes = key_len.to_be_bytes();
                 let key_bytes = key.as_bytes();
+                state.table_data.bloom_filter.add_key(&key);
 
                 if state.encoded_bytes == 0 {
                     state.table_data.offsets.extend(&key_len_bytes);

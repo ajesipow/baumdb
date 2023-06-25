@@ -6,6 +6,7 @@
 #![cfg_attr(all(test, feature = "nightly"), feature(test))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod bloom_filter;
 mod db;
 mod deserialization;
 mod file_handler;
