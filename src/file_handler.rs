@@ -96,7 +96,6 @@ impl FileHandling for SstFileHandler {
             .create_new(true)
             .open(bloom_filter_file_path)
             .await?;
-        // FIXME: also encode the filter params here
         let bloom_bytes: Vec<u8> = bloom_filter.into();
         bloom_filter_file.write_all(&bloom_bytes).await?;
         Ok(())
