@@ -9,7 +9,7 @@
 mod bloom_filter;
 mod db;
 mod deserialization;
-mod file_handler;
+mod file_handling;
 mod memtable;
 mod serialization;
 

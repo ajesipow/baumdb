@@ -1,6 +1,6 @@
 use crate::bloom_filter::{BloomFilter, DefaultBloomFilter};
 use crate::deserialization::{read_key_offset, read_value};
-use crate::file_handler::{FileHandling, SstFileBundle, SstFileHandler};
+use crate::file_handling::{FileHandling, SstFileBundle, SstFileHandler};
 use crate::memtable::{MemTable, MemTableRead, MemTableReadOnly, MemTableWrite, MemValue};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,11 +9,8 @@ use std::io::SeekFrom;
 use std::io::{Cursor, Read};
 use std::mem;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::fs::{create_dir, File};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::sync::mpsc::Sender;
-use tokio::sync::{mpsc, RwLock};
 
 #[async_trait]
 pub trait DB {
@@ -33,8 +30,7 @@ pub struct BaumDb {
     // reads while the previous main table is still flushed to disk.
     secondary_table: MemTableReadOnly,
     max_memtable_size: usize,
-    file_handler: Arc<RwLock<SstFileHandler>>,
-    flush_sender: Sender<MemTable>,
+    file_handler: SstFileHandler,
 }
 
 #[async_trait]
@@ -47,16 +43,14 @@ impl DB for BaumDb {
         match self.secondary_table.get(key)? {
             Some(value) => Ok(Some(value)),
             None => {
-                let read_lock = self.file_handler.read().await;
-                let file_path_bundles = read_lock.file_path_bundles().clone();
-                drop(read_lock);
+                let file_path_bundles = self.file_handler.file_path_bundles();
                 // TODO can skip first SStable (because it is equivalent to secondary table)
                 // But need to make sure no tables are currently flushed
                 for SstFileBundle {
                     main_data_file_path,
                     index_file_path,
                     bloom_filter_file_path,
-                } in file_path_bundles
+                } in &*file_path_bundles.inner().read().await
                 {
                     let mut bloom_filter_file = File::open(bloom_filter_file_path).await?;
                     let mut bloom_filter_bytes = Vec::<u8>::new();
@@ -146,23 +140,12 @@ impl BaumDb {
                 .await
                 .expect("be able to create directory");
         }
-        let file_handler = Arc::new(RwLock::new(SstFileHandler::new(path)));
-        let (tx, mut rx) = mpsc::channel(1);
-        let file_handler_clone = file_handler.clone();
-        tokio::spawn(async move {
-            while let Some(memtable) = rx.recv().await {
-                let mut lock = file_handler_clone.write().await;
-                let _ = lock.flush(memtable).await;
-                drop(lock)
-            }
-        });
 
         Self {
             main_table: Default::default(),
             secondary_table: Default::default(),
             max_memtable_size,
-            file_handler,
-            flush_sender: tx,
+            file_handler: SstFileHandler::new(path),
         }
     }
 
@@ -178,7 +161,7 @@ impl BaumDb {
         let mut previous_memtable = Default::default();
         mem::swap(&mut previous_memtable, &mut self.main_table);
         self.secondary_table = previous_memtable.clone().into();
-        self.flush_sender.send(previous_memtable).await?;
+        self.file_handler.flush(previous_memtable).await?;
         Ok(())
     }
 }

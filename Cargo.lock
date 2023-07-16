@@ -53,6 +53,7 @@ dependencies = [
  "bytes",
  "criterion",
  "flate2",
+ "itertools",
  "tokio",
  "uuid",
 ]
