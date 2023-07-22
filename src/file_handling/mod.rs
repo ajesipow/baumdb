@@ -21,6 +21,16 @@ pub(crate) trait FileHandling {
     fn file_path_bundles(&self) -> &FileBundles;
 }
 
+#[async_trait]
+pub(crate) trait DataHandling {
+    async fn try_from_file<P>(path: P) -> Result<Self>
+    where
+        Self: Sized,
+        P: AsRef<Path>,
+        P: Into<PathBuf>,
+        P: Send;
+}
+
 #[derive(Debug)]
 struct FlushData {
     data: MemTable,

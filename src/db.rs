@@ -1,6 +1,6 @@
 use crate::bloom_filter::{BloomFilter, DefaultBloomFilter};
 use crate::deserialization::{read_key_offset, read_value};
-use crate::file_handling::{FileHandling, SstFileBundle, SstFileHandler};
+use crate::file_handling::{DataHandling, FileHandling, SstFileBundle, SstFileHandler};
 use crate::memtable::{MemTable, MemTableRead, MemTableReadOnly, MemTableWrite, MemValue};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -52,12 +52,8 @@ impl DB for BaumDb {
                     bloom_filter_file_path,
                 } in &*file_path_bundles.inner().read().await
                 {
-                    let mut bloom_filter_file = File::open(bloom_filter_file_path).await?;
-                    let mut bloom_filter_bytes = Vec::<u8>::new();
-                    bloom_filter_file
-                        .read_to_end(&mut bloom_filter_bytes)
-                        .await?;
-                    let bloom_filter = DefaultBloomFilter::try_from(bloom_filter_bytes)?;
+                    let bloom_filter =
+                        DefaultBloomFilter::try_from_file(bloom_filter_file_path).await?;
                     if bloom_filter.may_contain_key(key) {
                         let mut index_file = File::open(index_file_path).await?;
                         let mut index_as_bytes = Vec::<u8>::new();
