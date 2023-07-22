@@ -73,19 +73,9 @@ impl DB for BaumDb {
                         {
                             let mut main_data_file = File::open(&main_data_file_path).await?;
                             main_data_file.seek(SeekFrom::Start(*offset)).await?;
-                            let raw_block = match index_iter.next() {
-                                Some((_, next_offset)) => {
-                                    let n_bytes_to_read = (next_offset - offset) as usize;
-                                    let mut raw_block = vec![0; n_bytes_to_read];
-                                    main_data_file.read_exact(&mut raw_block).await?;
-                                    raw_block
-                                }
-                                None => {
-                                    let mut raw_block = vec![];
-                                    main_data_file.read_to_end(&mut raw_block).await?;
-                                    raw_block
-                                }
-                            };
+                            let encoded_block_length = main_data_file.read_u64().await? as usize;
+                            let mut raw_block = vec![0; encoded_block_length];
+                            main_data_file.read_exact(&mut raw_block).await?;
 
                             let mut decoder = GzDecoder::new(raw_block.as_slice());
                             // The vec will very likely end up larger than the `n_bytes_to_read`,

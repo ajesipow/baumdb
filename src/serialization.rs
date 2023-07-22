@@ -76,6 +76,12 @@ impl Serialize for MemTable {
 
                     let encoded_data = encoder.finish()?;
                     let encoded_len = encoded_data.len();
+                    // Save next encoded block length first so that the file can be read as is
+                    state
+                        .table_data
+                        .main_data
+                        .extend((encoded_len as u64).to_be_bytes());
+                    // Store encoded block
                     state.table_data.main_data.extend(encoded_data);
                     state
                         .table_data
