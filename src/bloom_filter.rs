@@ -1,7 +1,12 @@
+use crate::file_handling::DataHandling;
 use anyhow::Error;
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
+use std::path::{Path, PathBuf};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 pub(crate) trait BloomFilter {
     fn add_key(&mut self, key: &str);
@@ -21,6 +26,24 @@ impl DefaultBloomFilter {
             filter: vec![0; size],
             hasher: BloomHasher { size, n_hashes },
         }
+    }
+}
+
+#[async_trait]
+impl DataHandling for DefaultBloomFilter {
+    async fn try_from_file<P>(path: P) -> Result<DefaultBloomFilter>
+    where
+        Self: Sized,
+        P: AsRef<Path>,
+        P: Into<PathBuf>,
+        P: Send,
+    {
+        let mut bloom_filter_file = File::open(path).await?;
+        let mut bloom_filter_bytes = Vec::<u8>::new();
+        bloom_filter_file
+            .read_to_end(&mut bloom_filter_bytes)
+            .await?;
+        DefaultBloomFilter::try_from(bloom_filter_bytes)
     }
 }
 
