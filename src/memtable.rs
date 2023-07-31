@@ -1,5 +1,14 @@
+use crate::deserialization::read_value;
+use crate::file_handling::DataHandling;
 use anyhow::Result;
+use async_trait::async_trait;
+use bytes::Buf;
+use flate2::read::GzDecoder;
 use std::collections::BTreeMap;
+use std::io::{Cursor, Read};
+use std::path::{Path, PathBuf};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -26,6 +35,10 @@ impl MemTable {
         // number of entries.
         self.0.len()
     }
+
+    pub(crate) fn into_inner(self) -> MemTableBase {
+        self.0
+    }
 }
 
 impl IntoIterator for MemTable {
@@ -46,17 +59,17 @@ impl IntoIterator for MemTableReadOnly {
     }
 }
 
-pub(crate) trait MemTableRead {
+pub(crate) trait MemTableGet {
     fn get(&self, key: &str) -> Result<Option<String>>;
 }
 
-impl MemTableRead for MemTable {
+impl MemTableGet for MemTable {
     fn get(&self, key: &str) -> Result<Option<String>> {
         memtable_get_inner(&self.0, key)
     }
 }
 
-impl MemTableRead for MemTableReadOnly {
+impl MemTableGet for MemTableReadOnly {
     fn get(&self, key: &str) -> Result<Option<String>> {
         memtable_get_inner(&self.0, key)
     }
@@ -94,5 +107,46 @@ fn memtable_get_inner(base_table: &MemTableBase, key: &str) -> Result<Option<Str
 impl From<MemTable> for MemTableReadOnly {
     fn from(value: MemTable) -> Self {
         Self(value.0)
+    }
+}
+
+impl From<MemTableBase> for MemTable {
+    fn from(value: MemTableBase) -> Self {
+        Self(value)
+    }
+}
+
+#[async_trait]
+impl DataHandling for MemTable {
+    async fn try_from_file<P>(path: P) -> Result<MemTable>
+    where
+        Self: Sized,
+        P: AsRef<Path>,
+        P: Into<PathBuf>,
+        P: Send,
+    {
+        let mut memtable_file = File::open(path).await?;
+        let mut memtable_bytes = Vec::<u8>::new();
+        memtable_file.read_to_end(&mut memtable_bytes).await?;
+        let mut raw_table: MemTableBase = BTreeMap::new();
+
+        let mut memtable_bytes = Cursor::new(memtable_bytes);
+
+        while memtable_bytes.has_remaining() {
+            let encoded_block_length = memtable_bytes.read_u64().await? as usize;
+            let mut raw_block = vec![0; encoded_block_length];
+            std::io::Read::read_exact(&mut memtable_bytes, &mut raw_block)?;
+
+            let mut decoder = GzDecoder::new(raw_block.as_slice());
+            // The vec will very likely end up larger than the `n_bytes_to_read`,
+            // but that's the best we know at this point and it'll save some reallocations.
+            let mut decompressed_block = Vec::with_capacity(raw_block.len());
+            decoder.read_to_end(&mut decompressed_block)?;
+            let mut decompressed_cursor = Cursor::new(decompressed_block);
+            while let Ok((key, value)) = read_value(&mut decompressed_cursor) {
+                raw_table.insert(key, value);
+            }
+        }
+        Ok(MemTable(raw_table))
     }
 }

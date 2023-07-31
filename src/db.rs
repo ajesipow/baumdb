@@ -1,7 +1,7 @@
 use crate::bloom_filter::{BloomFilter, DefaultBloomFilter};
 use crate::deserialization::{read_key_offset, read_value};
 use crate::file_handling::{DataHandling, FileHandling, SstFileBundle, SstFileHandler};
-use crate::memtable::{MemTable, MemTableRead, MemTableReadOnly, MemTableWrite, MemValue};
+use crate::memtable::{MemTable, MemTableGet, MemTableReadOnly, MemTableWrite, MemValue};
 use anyhow::Result;
 use async_trait::async_trait;
 use flate2::read::GzDecoder;
