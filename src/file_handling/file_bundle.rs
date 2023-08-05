@@ -1,18 +1,20 @@
 use async_trait::async_trait;
 use itertools::Itertools;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::fs::remove_file;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 const LEVEL_COMPACTION_THRESHOLD: usize = 4;
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileBundlesLevelled {
     base_path: PathBuf,
-    l0: VecDeque<FileBundle>,
-    l1: VecDeque<FileBundle>,
-    l2: VecDeque<FileBundle>,
+    pub(crate) l0: VecDeque<FileBundle>,
+    pub(crate) l1: VecDeque<FileBundle>,
+    pub(crate) l2: VecDeque<FileBundle>,
 }
 
 impl FileBundlesLevelled {
@@ -24,11 +26,6 @@ impl FileBundlesLevelled {
             l2: VecDeque::with_capacity(LEVEL_COMPACTION_THRESHOLD),
         }
     }
-
-    pub fn l0(&mut self) -> &[FileBundle] {
-        self.l0.make_contiguous();
-        self.l0.as_slices().0
-    }
 }
 
 impl<'a> IntoIterator for &'a FileBundlesLevelled {
@@ -39,17 +36,9 @@ impl<'a> IntoIterator for &'a FileBundlesLevelled {
         let sorted_bundles = self
             .l0
             .iter()
-            .filter_map(Into::<Option<SstFileBundle<'a>>>::into)
-            .chain(
-                self.l1
-                    .iter()
-                    .filter_map(Into::<Option<SstFileBundle<'a>>>::into),
-            )
-            .chain(
-                self.l2
-                    .iter()
-                    .filter_map(Into::<Option<SstFileBundle<'a>>>::into),
-            )
+            .map(Into::<SstFileBundle<'a>>::into)
+            .chain(self.l1.iter().map(Into::<SstFileBundle<'a>>::into))
+            .chain(self.l2.iter().map(Into::<SstFileBundle<'a>>::into))
             .collect_vec();
         sorted_bundles.into_iter()
     }
@@ -64,10 +53,10 @@ pub(crate) struct SstFileBundle<'a> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileBundle {
+    id: Uuid,
     main_data_file_path: PathBuf,
     index_file_path: PathBuf,
     bloom_filter_file_path: PathBuf,
-    compacted: bool,
     level: Level,
 }
 
@@ -80,21 +69,21 @@ pub(crate) enum Level {
 }
 
 impl FileBundle {
+    pub(crate) fn id(&self) -> Uuid {
+        self.id
+    }
+
     pub(crate) fn main_data_file_path(&self) -> &Path {
         &self.main_data_file_path
     }
 }
 
-impl<'a> From<&'a FileBundle> for Option<SstFileBundle<'a>> {
+impl<'a> From<&'a FileBundle> for SstFileBundle<'a> {
     fn from(value: &'a FileBundle) -> Self {
-        if value.compacted {
-            None
-        } else {
-            Some(SstFileBundle {
-                main_data_file_path: &value.main_data_file_path,
-                index_file_path: &value.index_file_path,
-                bloom_filter_file_path: &value.bloom_filter_file_path,
-            })
+        SstFileBundle {
+            main_data_file_path: &value.main_data_file_path,
+            index_file_path: &value.index_file_path,
+            bloom_filter_file_path: &value.bloom_filter_file_path,
         }
     }
 }
@@ -102,10 +91,10 @@ impl<'a> From<&'a FileBundle> for Option<SstFileBundle<'a>> {
 impl From<UncommittedFileBundle> for FileBundle {
     fn from(value: UncommittedFileBundle) -> Self {
         Self {
+            id: value.0.id,
             main_data_file_path: value.0.main_data_file_path,
             index_file_path: value.0.index_file_path,
             bloom_filter_file_path: value.0.bloom_filter_file_path,
-            compacted: false,
             level: value.0.level,
         }
     }
@@ -150,6 +139,10 @@ pub(crate) trait FileBundleHandle {
         &self,
         uncommitted_bundle: UncommittedFileBundle,
     ) -> ShouldCompact;
+
+    /// Remove bundles from `level`.
+    /// Returns the number of deleted file bundles.
+    async fn remove_bundles(&mut self, bundles_to_remove: &HashSet<Uuid>) -> usize;
 }
 
 #[derive(Debug, Clone)]
@@ -188,10 +181,10 @@ impl FileBundleHandle for FileBundles {
         let bloom_filter_file_path = Path::join(&base_path, bloom_filter_file_name);
 
         let bundle = FileBundle {
+            id: Uuid::new_v4(),
             main_data_file_path,
             index_file_path,
             bloom_filter_file_path,
-            compacted: false,
             level,
         };
         UncommittedFileBundle(bundle)
@@ -222,5 +215,51 @@ impl FileBundleHandle for FileBundles {
         } else {
             ShouldCompact::No
         }
+    }
+
+    async fn remove_bundles(&mut self, bundles_to_remove: &HashSet<Uuid>) -> usize {
+        let mut files_to_delete = Vec::with_capacity(bundles_to_remove.len());
+        let mut lock = self.0.write().await;
+        // TODO: DRY
+        let mut i = 0;
+        while i < lock.l0.len() {
+            if bundles_to_remove.contains(&lock.l0[i].id) {
+                files_to_delete.push(lock.l0.remove(i).unwrap())
+            } else {
+                i += 1;
+            }
+        }
+        let mut i = 0;
+        while i < lock.l1.len() {
+            if bundles_to_remove.contains(&lock.l1[i].id) {
+                files_to_delete.push(lock.l1.remove(i).unwrap())
+            } else {
+                i += 1;
+            }
+        }
+        let mut i = 0;
+        while i < lock.l2.len() {
+            if bundles_to_remove.contains(&lock.l2[i].id) {
+                files_to_delete.push(lock.l2.remove(i).unwrap())
+            } else {
+                i += 1;
+            }
+        }
+        drop(lock);
+
+        let n_deleted_files = files_to_delete.len();
+        for FileBundle {
+            id: _,
+            main_data_file_path,
+            index_file_path,
+            bloom_filter_file_path,
+            level: _,
+        } in files_to_delete
+        {
+            remove_file(bloom_filter_file_path).await.unwrap();
+            remove_file(index_file_path).await.unwrap();
+            remove_file(main_data_file_path).await.unwrap();
+        }
+        n_deleted_files
     }
 }
