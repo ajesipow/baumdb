@@ -61,12 +61,22 @@ pub(crate) struct FileBundle {
     level: Level,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 #[allow(dead_code)]
 pub(crate) enum Level {
     L0,
     L1,
     L2,
+}
+
+impl Level {
+    pub(crate) fn next_level(&self) -> Option<Self> {
+        match self {
+            Level::L0 => Some(Level::L1),
+            Level::L1 => Some(Level::L2),
+            Level::L2 => None,
+        }
+    }
 }
 
 impl FileBundle {
@@ -196,22 +206,23 @@ impl FileBundleHandle for FileBundles {
         uncommitted_bundle: UncommittedFileBundle,
     ) -> ShouldCompact {
         let mut lock = self.0.write().await;
-        let number_of_bundles_in_committed_level = match uncommitted_bundle.0.level {
+        let should_compact = match uncommitted_bundle.0.level {
             Level::L0 => {
                 lock.l0.push_front(uncommitted_bundle.into_inner());
-                lock.l0.len()
+                lock.l0.len() >= 4
             }
             Level::L1 => {
                 lock.l1.push_front(uncommitted_bundle.into_inner());
-                lock.l1.len()
+                lock.l1.len() >= 8
             }
             Level::L2 => {
                 lock.l2.push_front(uncommitted_bundle.into_inner());
-                lock.l2.len()
+                // Never compact the last level
+                false
             }
         };
 
-        if number_of_bundles_in_committed_level >= LEVEL_COMPACTION_THRESHOLD {
+        if should_compact {
             ShouldCompact::Yes
         } else {
             ShouldCompact::No
