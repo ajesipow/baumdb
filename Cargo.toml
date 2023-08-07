@@ -17,6 +17,8 @@ uuid = { version = "1.4", features = ["v4"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
+rand_chacha = "0.3.1"
+rand = "0.8"
 
 
 [[bench]]

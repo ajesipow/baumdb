@@ -7,6 +7,7 @@ use tokio::fs::remove_file;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+// The number of file bundles per level before compaction is started
 const LEVEL_COMPACTION_THRESHOLD: usize = 4;
 
 #[derive(Debug, Clone)]
