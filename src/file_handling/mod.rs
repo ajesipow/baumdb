@@ -59,7 +59,8 @@ impl SstFileHandler {
 
         tokio::spawn(async move {
             while compaction_rx.recv().await.is_some() {
-                file_bundles_clone_1.compact().await;
+                // TODO handle errors
+                let _ = file_bundles_clone_1.compact().await;
             }
         });
 
