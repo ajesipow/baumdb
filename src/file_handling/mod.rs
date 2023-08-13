@@ -1,23 +1,32 @@
-use crate::file_handling::file_bundle::{FileBundles, Level, ShouldCompact};
-use crate::file_handling::flushing::flush;
+use std::fmt::Debug;
+use std::path::Path;
+use std::path::PathBuf;
+
 use anyhow::Result;
 use async_trait::async_trait;
-use std::fmt::Debug;
-use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+
+use crate::file_handling::file_bundle::FileBundles;
+use crate::file_handling::file_bundle::Level;
+use crate::file_handling::file_bundle::ShouldCompact;
+use crate::file_handling::flushing::flush;
 
 mod compaction;
 mod file_bundle;
 mod flushing;
 
+pub(crate) use file_bundle::SstFileBundle;
+
 use crate::file_handling::compaction::Compaction;
 use crate::memtable::MemTable;
-pub(crate) use file_bundle::SstFileBundle;
 
 #[async_trait]
 pub(crate) trait FileHandling {
-    async fn flush(&mut self, data: MemTable) -> Result<()>;
+    async fn flush(
+        &mut self,
+        data: MemTable,
+    ) -> Result<()>;
 
     fn file_path_bundles(&self) -> &FileBundles;
 }
@@ -93,7 +102,10 @@ impl SstFileHandler {
 
 #[async_trait]
 impl FileHandling for SstFileHandler {
-    async fn flush(&mut self, data: MemTable) -> Result<()> {
+    async fn flush(
+        &mut self,
+        data: MemTable,
+    ) -> Result<()> {
         let (tx, rx) = oneshot::channel::<Result<()>>();
         let flush_data = FlushData {
             data,

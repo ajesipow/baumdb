@@ -1,24 +1,49 @@
-use crate::bloom_filter::{BloomFilter, DefaultBloomFilter};
-use crate::deserialization::{read_key_offset, read_value};
-use crate::file_handling::{DataHandling, FileHandling, SstFileBundle, SstFileHandler};
-use crate::memtable::{MemTable, MemTableGet, MemTableReadOnly, MemTableWrite, MemValue};
+use std::io::Cursor;
+use std::io::Read;
+use std::io::SeekFrom;
+use std::mem;
+use std::path::Path;
+use std::path::PathBuf;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use flate2::read::GzDecoder;
-use std::io::SeekFrom;
-use std::io::{Cursor, Read};
-use std::mem;
-use std::path::{Path, PathBuf};
-use tokio::fs::{create_dir, File};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::fs::create_dir;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncSeekExt;
+
+use crate::bloom_filter::BloomFilter;
+use crate::bloom_filter::DefaultBloomFilter;
+use crate::deserialization::read_key_offset;
+use crate::deserialization::read_value;
+use crate::file_handling::DataHandling;
+use crate::file_handling::FileHandling;
+use crate::file_handling::SstFileBundle;
+use crate::file_handling::SstFileHandler;
+use crate::memtable::MemTable;
+use crate::memtable::MemTableGet;
+use crate::memtable::MemTableReadOnly;
+use crate::memtable::MemTableWrite;
+use crate::memtable::MemValue;
 
 #[async_trait]
 pub trait DB {
-    async fn get(&self, key: &str) -> Result<Option<String>>;
+    async fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>>;
 
-    async fn put(&mut self, key: String, value: String) -> Result<()>;
+    async fn put(
+        &mut self,
+        key: String,
+        value: String,
+    ) -> Result<()>;
 
-    async fn delete(&mut self, key: &str) -> Result<()>;
+    async fn delete(
+        &mut self,
+        key: &str,
+    ) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -35,7 +60,10 @@ pub struct BaumDb {
 
 #[async_trait]
 impl DB for BaumDb {
-    async fn get(&self, key: &str) -> Result<Option<String>> {
+    async fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>> {
         if let Some(value) = self.main_table.get(key)? {
             return Ok(Some(value));
         }
@@ -101,19 +129,29 @@ impl DB for BaumDb {
         }
     }
 
-    async fn put(&mut self, key: String, value: String) -> Result<()> {
+    async fn put(
+        &mut self,
+        key: String,
+        value: String,
+    ) -> Result<()> {
         self.main_table.put(key, value)?;
         self.maybe_flush_memtable().await
     }
 
-    async fn delete(&mut self, key: &str) -> Result<()> {
+    async fn delete(
+        &mut self,
+        key: &str,
+    ) -> Result<()> {
         self.main_table.delete(key)?;
         self.maybe_flush_memtable().await
     }
 }
 
 impl BaumDb {
-    pub async fn new<P>(sst_dir_path: P, max_memtable_size: usize) -> Self
+    pub async fn new<P>(
+        sst_dir_path: P,
+        max_memtable_size: usize,
+    ) -> Self
     where
         P: AsRef<Path>,
         P: Into<PathBuf>,

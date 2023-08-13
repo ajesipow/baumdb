@@ -1,9 +1,12 @@
-use baumdb::BaumDb;
-use baumdb::DB;
 use std::collections::HashMap;
 use std::fs::read_dir;
-use std::path::{Path, PathBuf};
-use tokio::fs::{create_dir_all, remove_dir_all};
+use std::path::Path;
+use std::path::PathBuf;
+
+use baumdb::BaumDb;
+use baumdb::DB;
+use tokio::fs::create_dir_all;
+use tokio::fs::remove_dir_all;
 use uuid::Uuid;
 
 static TEST_LOG_PATH: &str = "./test-logs";

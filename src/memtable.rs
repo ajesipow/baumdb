@@ -1,14 +1,18 @@
-use crate::deserialization::read_value;
-use crate::file_handling::DataHandling;
+use std::collections::BTreeMap;
+use std::io::Cursor;
+use std::io::Read;
+use std::path::Path;
+use std::path::PathBuf;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Buf;
 use flate2::read::GzDecoder;
-use std::collections::BTreeMap;
-use std::io::{Cursor, Read};
-use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+
+use crate::deserialization::read_value;
+use crate::file_handling::DataHandling;
 
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -42,8 +46,8 @@ impl MemTable {
 }
 
 impl IntoIterator for MemTable {
-    type Item = (String, MemValue);
     type IntoIter = std::collections::btree_map::IntoIter<String, MemValue>;
+    type Item = (String, MemValue);
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -51,8 +55,8 @@ impl IntoIterator for MemTable {
 }
 
 impl IntoIterator for MemTableReadOnly {
-    type Item = (String, MemValue);
     type IntoIter = std::collections::btree_map::IntoIter<String, MemValue>;
+    type Item = (String, MemValue);
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -60,34 +64,57 @@ impl IntoIterator for MemTableReadOnly {
 }
 
 pub(crate) trait MemTableGet {
-    fn get(&self, key: &str) -> Result<Option<String>>;
+    fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>>;
 }
 
 impl MemTableGet for MemTable {
-    fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>> {
         memtable_get_inner(&self.0, key)
     }
 }
 
 impl MemTableGet for MemTableReadOnly {
-    fn get(&self, key: &str) -> Result<Option<String>> {
+    fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>> {
         memtable_get_inner(&self.0, key)
     }
 }
 
 pub(crate) trait MemTableWrite {
-    fn put(&mut self, key: String, value: String) -> Result<()>;
+    fn put(
+        &mut self,
+        key: String,
+        value: String,
+    ) -> Result<()>;
 
-    fn delete(&mut self, key: &str) -> Result<()>;
+    fn delete(
+        &mut self,
+        key: &str,
+    ) -> Result<()>;
 }
 
 impl MemTableWrite for MemTable {
-    fn put(&mut self, key: String, value: String) -> Result<()> {
+    fn put(
+        &mut self,
+        key: String,
+        value: String,
+    ) -> Result<()> {
         self.0.insert(key, MemValue::Put(value));
         Ok(())
     }
 
-    fn delete(&mut self, key: &str) -> Result<()> {
+    fn delete(
+        &mut self,
+        key: &str,
+    ) -> Result<()> {
         if self.0.remove(key).is_none() {
             // Key was not present in the memtable, but may be present in the SSTables on disk, so
             // let's add a tombstone just in case.
@@ -97,7 +124,10 @@ impl MemTableWrite for MemTable {
     }
 }
 
-fn memtable_get_inner(base_table: &MemTableBase, key: &str) -> Result<Option<String>> {
+fn memtable_get_inner(
+    base_table: &MemTableBase,
+    key: &str,
+) -> Result<Option<String>> {
     Ok(base_table.get(key).and_then(|v| match v {
         MemValue::Put(str) => Some(str.to_string()),
         MemValue::Delete => None,

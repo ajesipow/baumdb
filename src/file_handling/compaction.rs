@@ -1,12 +1,17 @@
-use crate::file_handling::file_bundle::{
-    FileBundleHandle, FileBundleId, FileBundles, Level, ShouldCompact,
-};
-use crate::file_handling::flushing::flush;
-use crate::file_handling::DataHandling;
-use crate::memtable::{MemTable, MemValue};
+use std::collections::HashSet;
+
 use anyhow::Result;
 use async_trait::async_trait;
-use std::collections::HashSet;
+
+use crate::file_handling::file_bundle::FileBundleHandle;
+use crate::file_handling::file_bundle::FileBundleId;
+use crate::file_handling::file_bundle::FileBundles;
+use crate::file_handling::file_bundle::Level;
+use crate::file_handling::file_bundle::ShouldCompact;
+use crate::file_handling::flushing::flush;
+use crate::file_handling::DataHandling;
+use crate::memtable::MemTable;
+use crate::memtable::MemValue;
 
 #[async_trait]
 pub(super) trait Compaction {

@@ -1,11 +1,20 @@
-use crate::file_handling::file_bundle::{FileBundleHandle, Level, ShouldCompact};
-use crate::serialization::{Serialize, SerializedTableData};
-use anyhow::Result;
 use std::fmt::Debug;
+
+use anyhow::Result;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
-pub(super) async fn flush<S, B>(data: S, handler: B, level: Level) -> Result<ShouldCompact>
+use crate::file_handling::file_bundle::FileBundleHandle;
+use crate::file_handling::file_bundle::Level;
+use crate::file_handling::file_bundle::ShouldCompact;
+use crate::serialization::Serialize;
+use crate::serialization::SerializedTableData;
+
+pub(super) async fn flush<S, B>(
+    data: S,
+    handler: B,
+    level: Level,
+) -> Result<ShouldCompact>
 where
     S: Serialize,
     S: Send,

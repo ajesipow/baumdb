@@ -1,8 +1,11 @@
+use std::collections::HashSet;
+use std::collections::VecDeque;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use itertools::Itertools;
-use std::collections::{HashSet, VecDeque};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::fs::remove_file;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -30,8 +33,8 @@ impl FileBundlesLevelled {
 }
 
 impl<'a> IntoIterator for &'a FileBundlesLevelled {
-    type Item = SstFileBundle<'a>;
     type IntoIter = std::vec::IntoIter<Self::Item>;
+    type Item = SstFileBundle<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         let sorted_bundles = self
@@ -152,14 +155,23 @@ pub(crate) enum ShouldCompact {
 pub(crate) trait FileBundleHandle {
     /// Gets a uncommitted new file bundle on level 0.
     /// Uncommitted means it is not yet visible to the outside.
-    async fn new_file_bundle(&self, level: Level) -> UncommittedFileBundle;
+    async fn new_file_bundle(
+        &self,
+        level: Level,
+    ) -> UncommittedFileBundle;
 
     /// Commit and uncommitted file bundle and make it therefore visible to the outside.
-    async fn commit_file_bundle(&self, uncommitted_bundle: UncommittedFileBundle) -> ShouldCompact;
+    async fn commit_file_bundle(
+        &self,
+        uncommitted_bundle: UncommittedFileBundle,
+    ) -> ShouldCompact;
 
     /// Remove bundles from `level`.
     /// Returns the number of deleted file bundles.
-    async fn remove_bundles(&mut self, bundles_to_remove: &HashSet<FileBundleId>) -> usize;
+    async fn remove_bundles(
+        &mut self,
+        bundles_to_remove: &HashSet<FileBundleId>,
+    ) -> usize;
 }
 
 #[derive(Debug, Clone)]
@@ -177,7 +189,10 @@ impl FileBundles {
 
 #[async_trait]
 impl FileBundleHandle for FileBundles {
-    async fn new_file_bundle(&self, level: Level) -> UncommittedFileBundle {
+    async fn new_file_bundle(
+        &self,
+        level: Level,
+    ) -> UncommittedFileBundle {
         let read_lock = self.0.read().await;
         let bundle_length = match level {
             Level::L0 => read_lock.l0.len(),
@@ -207,7 +222,10 @@ impl FileBundleHandle for FileBundles {
         UncommittedFileBundle(bundle)
     }
 
-    async fn commit_file_bundle(&self, uncommitted_bundle: UncommittedFileBundle) -> ShouldCompact {
+    async fn commit_file_bundle(
+        &self,
+        uncommitted_bundle: UncommittedFileBundle,
+    ) -> ShouldCompact {
         let mut lock = self.0.write().await;
         let should_compact = match uncommitted_bundle.0.level {
             Level::L0 => {
@@ -232,7 +250,10 @@ impl FileBundleHandle for FileBundles {
         }
     }
 
-    async fn remove_bundles(&mut self, bundles_to_remove: &HashSet<FileBundleId>) -> usize {
+    async fn remove_bundles(
+        &mut self,
+        bundles_to_remove: &HashSet<FileBundleId>,
+    ) -> usize {
         let mut files_to_delete = Vec::with_capacity(bundles_to_remove.len());
         let mut lock = self.0.write().await;
         // TODO: DRY

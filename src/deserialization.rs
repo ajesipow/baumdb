@@ -1,8 +1,12 @@
-use crate::memtable::MemValue;
-use anyhow::{anyhow, Result};
-use byteorder::{BigEndian, ReadBytesExt};
 use std::io::Cursor;
 use std::io::Read;
+
+use anyhow::anyhow;
+use anyhow::Result;
+use byteorder::BigEndian;
+use byteorder::ReadBytesExt;
+
+use crate::memtable::MemValue;
 
 // FIXME: make this nicer?
 pub(crate) fn read_value(reader: &mut Cursor<Vec<u8>>) -> Result<(String, MemValue)> {

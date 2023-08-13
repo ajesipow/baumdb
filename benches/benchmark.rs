@@ -1,12 +1,16 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use rand::distributions::{Alphanumeric, DistString};
+use std::path::PathBuf;
+
+use baumdb::BaumDb;
+use baumdb::DB;
+use criterion::criterion_group;
+use criterion::criterion_main;
+use criterion::Criterion;
+use rand::distributions::Alphanumeric;
+use rand::distributions::DistString;
 use rand::prelude::*;
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use std::path::PathBuf;
 use tokio::fs::create_dir_all;
-
-use baumdb::{BaumDb, DB};
 use uuid::Uuid;
 
 static TEST_LOG_PATH: &str = "./test-logs";

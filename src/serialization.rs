@@ -1,10 +1,14 @@
-use crate::bloom_filter::{BloomFilter, DefaultBloomFilter};
-use crate::memtable::{MemTable, MemValue};
+use std::io::Write;
+use std::mem;
+
 use anyhow::Result;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use std::io::Write;
-use std::mem;
+
+use crate::bloom_filter::BloomFilter;
+use crate::bloom_filter::DefaultBloomFilter;
+use crate::memtable::MemTable;
+use crate::memtable::MemValue;
 
 #[derive(Debug, Default)]
 pub(crate) struct SerializedTableData {
