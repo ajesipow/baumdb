@@ -54,11 +54,20 @@ pub(crate) struct SstFileBundle<'a> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileBundle {
-    id: Uuid,
+    id: FileBundleId,
     main_data_file_path: PathBuf,
     index_file_path: PathBuf,
     bloom_filter_file_path: PathBuf,
     level: Level,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub(crate) struct FileBundleId(Uuid);
+
+impl FileBundleId {
+    pub(crate) fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -80,7 +89,7 @@ impl Level {
 }
 
 impl FileBundle {
-    pub(crate) fn id(&self) -> Uuid {
+    pub(crate) fn id(&self) -> FileBundleId {
         self.id
     }
 
@@ -153,7 +162,7 @@ pub(crate) trait FileBundleHandle {
 
     /// Remove bundles from `level`.
     /// Returns the number of deleted file bundles.
-    async fn remove_bundles(&mut self, bundles_to_remove: &HashSet<Uuid>) -> usize;
+    async fn remove_bundles(&mut self, bundles_to_remove: &HashSet<FileBundleId>) -> usize;
 }
 
 #[derive(Debug, Clone)]
@@ -192,7 +201,7 @@ impl FileBundleHandle for FileBundles {
         let bloom_filter_file_path = Path::join(&base_path, bloom_filter_file_name);
 
         let bundle = FileBundle {
-            id: Uuid::new_v4(),
+            id: FileBundleId::new(),
             main_data_file_path,
             index_file_path,
             bloom_filter_file_path,
@@ -229,7 +238,7 @@ impl FileBundleHandle for FileBundles {
         }
     }
 
-    async fn remove_bundles(&mut self, bundles_to_remove: &HashSet<Uuid>) -> usize {
+    async fn remove_bundles(&mut self, bundles_to_remove: &HashSet<FileBundleId>) -> usize {
         let mut files_to_delete = Vec::with_capacity(bundles_to_remove.len());
         let mut lock = self.0.write().await;
         // TODO: DRY

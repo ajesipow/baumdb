@@ -26,7 +26,7 @@ pub struct BaumDb {
     // The main memtable for reading from and writing to.
     main_table: MemTable,
     // A secondary table that can only be read from.
-    // It is corresponds to the previous main table and is needed to support
+    // It corresponds to the previous main table and is needed to support
     // reads while the previous main table is still flushed to disk.
     secondary_table: MemTableReadOnly,
     max_memtable_size: usize,
@@ -44,8 +44,6 @@ impl DB for BaumDb {
             Some(value) => Ok(Some(value)),
             None => {
                 let file_path_bundles = self.file_handler.file_path_bundles();
-                // TODO can skip first SStable (because it is equivalent to secondary table)
-                // But need to make sure no tables are currently flushed
                 for SstFileBundle {
                     main_data_file_path,
                     index_file_path,

@@ -1,11 +1,12 @@
-use crate::file_handling::file_bundle::{FileBundleHandle, FileBundles, Level, ShouldCompact};
+use crate::file_handling::file_bundle::{
+    FileBundleHandle, FileBundleId, FileBundles, Level, ShouldCompact,
+};
 use crate::file_handling::flushing::flush;
 use crate::file_handling::DataHandling;
 use crate::memtable::{MemTable, MemValue};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashSet;
-use uuid::Uuid;
 
 #[async_trait]
 pub(super) trait Compaction {
@@ -34,7 +35,7 @@ impl Compaction for FileBundles {
             if bundles.is_empty() {
                 return Ok(());
             }
-            let mut compacted_bundle_ids: HashSet<Uuid> = HashSet::new();
+            let mut compacted_bundle_ids: HashSet<FileBundleId> = HashSet::new();
             // Invariant is that they are sorted in order, reversing then is oldest to newest.
             bundles.make_contiguous().reverse();
 
