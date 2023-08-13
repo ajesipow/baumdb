@@ -39,6 +39,6 @@ where
     bloom_filter_file.write_all(&bloom_bytes).await?;
 
     // We can only commit and thus make visible the files after they were successfully written
-    let should_compact = handler.commit_file_path_bundle(uncommited_bundle).await;
+    let should_compact = handler.commit_file_bundle(uncommited_bundle).await;
     Ok(should_compact)
 }

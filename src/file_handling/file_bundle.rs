@@ -155,10 +155,7 @@ pub(crate) trait FileBundleHandle {
     async fn new_file_bundle(&self, level: Level) -> UncommittedFileBundle;
 
     /// Commit and uncommitted file bundle and make it therefore visible to the outside.
-    async fn commit_file_path_bundle(
-        &self,
-        uncommitted_bundle: UncommittedFileBundle,
-    ) -> ShouldCompact;
+    async fn commit_file_bundle(&self, uncommitted_bundle: UncommittedFileBundle) -> ShouldCompact;
 
     /// Remove bundles from `level`.
     /// Returns the number of deleted file bundles.
@@ -210,10 +207,7 @@ impl FileBundleHandle for FileBundles {
         UncommittedFileBundle(bundle)
     }
 
-    async fn commit_file_path_bundle(
-        &self,
-        uncommitted_bundle: UncommittedFileBundle,
-    ) -> ShouldCompact {
+    async fn commit_file_bundle(&self, uncommitted_bundle: UncommittedFileBundle) -> ShouldCompact {
         let mut lock = self.0.write().await;
         let should_compact = match uncommitted_bundle.0.level {
             Level::L0 => {
