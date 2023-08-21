@@ -28,7 +28,7 @@ pub(crate) trait FileHandling {
         data: MemTable,
     ) -> Result<()>;
 
-    fn file_path_bundles(&self) -> &FileBundles;
+    fn file_bundles(&self) -> &FileBundles;
 }
 
 #[async_trait]
@@ -116,7 +116,7 @@ impl FileHandling for SstFileHandler {
         Ok(())
     }
 
-    fn file_path_bundles(&self) -> &FileBundles {
+    fn file_bundles(&self) -> &FileBundles {
         &self.file_bundles
     }
 }

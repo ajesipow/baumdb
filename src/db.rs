@@ -16,7 +16,9 @@ use tokio::io::AsyncSeekExt;
 use crate::bloom_filter::BloomFilter;
 use crate::bloom_filter::DefaultBloomFilter;
 use crate::deserialization::read_key_offset;
-use crate::deserialization::read_value;
+use crate::deserialization::read_key_value;
+use crate::deserialization::KeyOffset;
+use crate::deserialization::KeyValue;
 use crate::file_handling::DataHandling;
 use crate::file_handling::FileHandling;
 use crate::file_handling::SstFileBundle;
@@ -71,7 +73,7 @@ impl DB for BaumDb {
         match self.secondary_table.get(key)? {
             Some(value) => Ok(Some(value)),
             None => {
-                let file_path_bundles = self.file_handler.file_path_bundles();
+                let file_path_bundles = self.file_handler.file_bundles();
                 for SstFileBundle {
                     main_data_file_path,
                     index_file_path,
@@ -89,7 +91,11 @@ impl DB for BaumDb {
                         // TODO: we're over-allocating here - is there a better way?
                         let mut index_vec = Vec::with_capacity(index_as_bytes.len());
                         let mut cursor = Cursor::new(index_as_bytes);
-                        while let Ok((indexed_key, offset)) = read_key_offset(&mut cursor) {
+                        while let Ok(KeyOffset {
+                            key: indexed_key,
+                            offset,
+                        }) = read_key_offset(&mut cursor)
+                        {
                             index_vec.push((indexed_key, offset));
                         }
                         let mut index_iter = index_vec.iter().peekable();
@@ -109,8 +115,10 @@ impl DB for BaumDb {
                             let mut decompressed_block = Vec::with_capacity(raw_block.len());
                             decoder.read_to_end(&mut decompressed_block)?;
                             let mut decompressed_cursor = Cursor::new(decompressed_block);
-                            while let Ok((existing_key, existing_value)) =
-                                read_value(&mut decompressed_cursor)
+                            while let Ok(KeyValue {
+                                key: existing_key,
+                                value: existing_value,
+                            }) = read_key_value(&mut decompressed_cursor)
                             {
                                 if existing_key == key {
                                     return match existing_value {

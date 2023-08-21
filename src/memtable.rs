@@ -11,7 +11,8 @@ use flate2::read::GzDecoder;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 
-use crate::deserialization::read_value;
+use crate::deserialization::read_key_value;
+use crate::deserialization::KeyValue;
 use crate::file_handling::DataHandling;
 
 #[non_exhaustive]
@@ -173,7 +174,7 @@ impl DataHandling for MemTable {
             let mut decompressed_block = Vec::with_capacity(raw_block.len());
             decoder.read_to_end(&mut decompressed_block)?;
             let mut decompressed_cursor = Cursor::new(decompressed_block);
-            while let Ok((key, value)) = read_value(&mut decompressed_cursor) {
+            while let Ok(KeyValue { key, value }) = read_key_value(&mut decompressed_cursor) {
                 raw_table.insert(key, value);
             }
         }
