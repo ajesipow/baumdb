@@ -1,27 +1,51 @@
-use crate::bloom_filter::{BloomFilter, DefaultBloomFilter};
-use crate::deserialization::{read_key_offset, read_value};
-use crate::file_handler::{FileHandling, SstFileBundle, SstFileHandler};
-use crate::memtable::{MemTable, MemTableRead, MemTableReadOnly, MemTableWrite, MemValue};
+use std::io::Cursor;
+use std::io::Read;
+use std::io::SeekFrom;
+use std::mem;
+use std::path::Path;
+use std::path::PathBuf;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use flate2::read::GzDecoder;
-use std::io::SeekFrom;
-use std::io::{Cursor, Read};
-use std::mem;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::fs::{create_dir, File};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::sync::mpsc::Sender;
-use tokio::sync::{mpsc, RwLock};
+use tokio::fs::create_dir;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncSeekExt;
+
+use crate::bloom_filter::BloomFilter;
+use crate::bloom_filter::DefaultBloomFilter;
+use crate::deserialization::read_key_offset;
+use crate::deserialization::read_key_value;
+use crate::deserialization::KeyOffset;
+use crate::deserialization::KeyValue;
+use crate::file_handling::DataHandling;
+use crate::file_handling::FileHandling;
+use crate::file_handling::SstFileBundle;
+use crate::file_handling::SstFileHandler;
+use crate::memtable::MemTable;
+use crate::memtable::MemTableGet;
+use crate::memtable::MemTableReadOnly;
+use crate::memtable::MemTableWrite;
+use crate::memtable::MemValue;
 
 #[async_trait]
 pub trait DB {
-    async fn get(&self, key: &str) -> Result<Option<String>>;
+    async fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>>;
 
-    async fn put(&mut self, key: String, value: String) -> Result<()>;
+    async fn put(
+        &mut self,
+        key: String,
+        value: String,
+    ) -> Result<()>;
 
-    async fn delete(&mut self, key: &str) -> Result<()>;
+    async fn delete(
+        &mut self,
+        key: &str,
+    ) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -29,17 +53,19 @@ pub struct BaumDb {
     // The main memtable for reading from and writing to.
     main_table: MemTable,
     // A secondary table that can only be read from.
-    // It is corresponds to the previous main table and is needed to support
+    // It corresponds to the previous main table and is needed to support
     // reads while the previous main table is still flushed to disk.
     secondary_table: MemTableReadOnly,
     max_memtable_size: usize,
-    file_handler: Arc<RwLock<SstFileHandler>>,
-    flush_sender: Sender<MemTable>,
+    file_handler: SstFileHandler,
 }
 
 #[async_trait]
 impl DB for BaumDb {
-    async fn get(&self, key: &str) -> Result<Option<String>> {
+    async fn get(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>> {
         if let Some(value) = self.main_table.get(key)? {
             return Ok(Some(value));
         }
@@ -47,23 +73,15 @@ impl DB for BaumDb {
         match self.secondary_table.get(key)? {
             Some(value) => Ok(Some(value)),
             None => {
-                let read_lock = self.file_handler.read().await;
-                let file_path_bundles = read_lock.file_path_bundles().clone();
-                drop(read_lock);
-                // TODO can skip first SStable (because it is equivalent to secondary table)
-                // But need to make sure no tables are currently flushed
+                let file_path_bundles = self.file_handler.file_bundles();
                 for SstFileBundle {
                     main_data_file_path,
                     index_file_path,
                     bloom_filter_file_path,
-                } in file_path_bundles
+                } in file_path_bundles.inner().read().await.iter()
                 {
-                    let mut bloom_filter_file = File::open(bloom_filter_file_path).await?;
-                    let mut bloom_filter_bytes = Vec::<u8>::new();
-                    bloom_filter_file
-                        .read_to_end(&mut bloom_filter_bytes)
-                        .await?;
-                    let bloom_filter = DefaultBloomFilter::try_from(bloom_filter_bytes)?;
+                    let bloom_filter =
+                        DefaultBloomFilter::try_from_file(bloom_filter_file_path).await?;
                     if bloom_filter.may_contain_key(key) {
                         let mut index_file = File::open(index_file_path).await?;
                         let mut index_as_bytes = Vec::<u8>::new();
@@ -73,7 +91,11 @@ impl DB for BaumDb {
                         // TODO: we're over-allocating here - is there a better way?
                         let mut index_vec = Vec::with_capacity(index_as_bytes.len());
                         let mut cursor = Cursor::new(index_as_bytes);
-                        while let Ok((indexed_key, offset)) = read_key_offset(&mut cursor) {
+                        while let Ok(KeyOffset {
+                            key: indexed_key,
+                            offset,
+                        }) = read_key_offset(&mut cursor)
+                        {
                             index_vec.push((indexed_key, offset));
                         }
                         let mut index_iter = index_vec.iter().peekable();
@@ -83,19 +105,9 @@ impl DB for BaumDb {
                         {
                             let mut main_data_file = File::open(&main_data_file_path).await?;
                             main_data_file.seek(SeekFrom::Start(*offset)).await?;
-                            let raw_block = match index_iter.next() {
-                                Some((_, next_offset)) => {
-                                    let n_bytes_to_read = (next_offset - offset) as usize;
-                                    let mut raw_block = vec![0; n_bytes_to_read];
-                                    main_data_file.read_exact(&mut raw_block).await?;
-                                    raw_block
-                                }
-                                None => {
-                                    let mut raw_block = vec![];
-                                    main_data_file.read_to_end(&mut raw_block).await?;
-                                    raw_block
-                                }
-                            };
+                            let encoded_block_length = main_data_file.read_u64().await? as usize;
+                            let mut raw_block = vec![0; encoded_block_length];
+                            main_data_file.read_exact(&mut raw_block).await?;
 
                             let mut decoder = GzDecoder::new(raw_block.as_slice());
                             // The vec will very likely end up larger than the `n_bytes_to_read`,
@@ -103,8 +115,10 @@ impl DB for BaumDb {
                             let mut decompressed_block = Vec::with_capacity(raw_block.len());
                             decoder.read_to_end(&mut decompressed_block)?;
                             let mut decompressed_cursor = Cursor::new(decompressed_block);
-                            while let Ok((existing_key, existing_value)) =
-                                read_value(&mut decompressed_cursor)
+                            while let Ok(KeyValue {
+                                key: existing_key,
+                                value: existing_value,
+                            }) = read_key_value(&mut decompressed_cursor)
                             {
                                 if existing_key == key {
                                     return match existing_value {
@@ -123,19 +137,29 @@ impl DB for BaumDb {
         }
     }
 
-    async fn put(&mut self, key: String, value: String) -> Result<()> {
+    async fn put(
+        &mut self,
+        key: String,
+        value: String,
+    ) -> Result<()> {
         self.main_table.put(key, value)?;
         self.maybe_flush_memtable().await
     }
 
-    async fn delete(&mut self, key: &str) -> Result<()> {
+    async fn delete(
+        &mut self,
+        key: &str,
+    ) -> Result<()> {
         self.main_table.delete(key)?;
         self.maybe_flush_memtable().await
     }
 }
 
 impl BaumDb {
-    pub async fn new<P>(sst_dir_path: P, max_memtable_size: usize) -> Self
+    pub async fn new<P>(
+        sst_dir_path: P,
+        max_memtable_size: usize,
+    ) -> Self
     where
         P: AsRef<Path>,
         P: Into<PathBuf>,
@@ -146,23 +170,12 @@ impl BaumDb {
                 .await
                 .expect("be able to create directory");
         }
-        let file_handler = Arc::new(RwLock::new(SstFileHandler::new(path)));
-        let (tx, mut rx) = mpsc::channel(1);
-        let file_handler_clone = file_handler.clone();
-        tokio::spawn(async move {
-            while let Some(memtable) = rx.recv().await {
-                let mut lock = file_handler_clone.write().await;
-                let _ = lock.flush(memtable).await;
-                drop(lock)
-            }
-        });
 
         Self {
             main_table: Default::default(),
             secondary_table: Default::default(),
             max_memtable_size,
-            file_handler,
-            flush_sender: tx,
+            file_handler: SstFileHandler::new(path),
         }
     }
 
@@ -178,7 +191,7 @@ impl BaumDb {
         let mut previous_memtable = Default::default();
         mem::swap(&mut previous_memtable, &mut self.main_table);
         self.secondary_table = previous_memtable.clone().into();
-        self.flush_sender.send(previous_memtable).await?;
+        self.file_handler.flush(previous_memtable).await?;
         Ok(())
     }
 }

@@ -1,12 +1,27 @@
-use anyhow::Error;
-use anyhow::{anyhow, Result};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
+use std::path::Path;
+use std::path::PathBuf;
+
+use anyhow::anyhow;
+use anyhow::Error;
+use anyhow::Result;
+use async_trait::async_trait;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
+
+use crate::file_handling::DataHandling;
 
 pub(crate) trait BloomFilter {
-    fn add_key(&mut self, key: &str);
+    fn add_key(
+        &mut self,
+        key: &str,
+    );
 
-    fn may_contain_key(&self, key: &str) -> bool;
+    fn may_contain_key(
+        &self,
+        key: &str,
+    ) -> bool;
 }
 
 #[derive(Debug)]
@@ -16,11 +31,32 @@ pub(crate) struct DefaultBloomFilter {
 }
 
 impl DefaultBloomFilter {
-    pub(crate) fn new(size: usize, n_hashes: u8) -> Self {
+    pub(crate) fn new(
+        size: usize,
+        n_hashes: u8,
+    ) -> Self {
         Self {
             filter: vec![0; size],
             hasher: BloomHasher { size, n_hashes },
         }
+    }
+}
+
+#[async_trait]
+impl DataHandling for DefaultBloomFilter {
+    async fn try_from_file<P>(path: P) -> Result<DefaultBloomFilter>
+    where
+        Self: Sized,
+        P: AsRef<Path>,
+        P: Into<PathBuf>,
+        P: Send,
+    {
+        let mut bloom_filter_file = File::open(path).await?;
+        let mut bloom_filter_bytes = Vec::<u8>::new();
+        bloom_filter_file
+            .read_to_end(&mut bloom_filter_bytes)
+            .await?;
+        DefaultBloomFilter::try_from(bloom_filter_bytes)
     }
 }
 
@@ -54,14 +90,20 @@ impl Default for DefaultBloomFilter {
 }
 
 impl BloomFilter for DefaultBloomFilter {
-    fn add_key(&mut self, key: &str) {
+    fn add_key(
+        &mut self,
+        key: &str,
+    ) {
         let bloom_filter_indices = self.hasher.hash_key(key);
         for idx in bloom_filter_indices {
             self.filter[idx] = 1;
         }
     }
 
-    fn may_contain_key(&self, key: &str) -> bool {
+    fn may_contain_key(
+        &self,
+        key: &str,
+    ) -> bool {
         let bloom_filter_indices = self.hasher.hash_key(key);
         bloom_filter_indices
             .into_iter()
@@ -70,7 +112,10 @@ impl BloomFilter for DefaultBloomFilter {
 }
 
 trait BloomHash {
-    fn hash_key(&self, key: &str) -> Vec<usize>;
+    fn hash_key(
+        &self,
+        key: &str,
+    ) -> Vec<usize>;
 }
 
 #[derive(Debug)]
@@ -80,7 +125,10 @@ struct BloomHasher {
 }
 
 impl BloomHash for BloomHasher {
-    fn hash_key(&self, key: &str) -> Vec<usize> {
+    fn hash_key(
+        &self,
+        key: &str,
+    ) -> Vec<usize> {
         let mut indices = vec![0; self.n_hashes as usize];
         let mut hasher = DefaultHasher::new();
         hasher.write(key.as_bytes());
