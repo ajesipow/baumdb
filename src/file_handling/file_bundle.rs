@@ -2,10 +2,10 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
+use std::slice;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use itertools::Itertools;
 use tokio::fs::remove_file;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -30,21 +30,44 @@ impl FileBundlesLevelled {
             l2: VecDeque::with_capacity(LEVEL_COMPACTION_THRESHOLD),
         }
     }
+
+    pub(crate) fn iter(&self) -> Iter<'_> {
+        let (i01, i02) = self.l0.as_slices();
+        let (i11, i12) = self.l1.as_slices();
+        let (i21, i22) = self.l2.as_slices();
+
+        Iter {
+            i01: i01.iter(),
+            i02: i02.iter(),
+            i11: i11.iter(),
+            i12: i12.iter(),
+            i21: i21.iter(),
+            i22: i22.iter(),
+        }
+    }
 }
 
-impl<'a> IntoIterator for &'a FileBundlesLevelled {
-    type IntoIter = std::vec::IntoIter<Self::Item>;
+pub(crate) struct Iter<'a> {
+    i01: slice::Iter<'a, FileBundle>,
+    i02: slice::Iter<'a, FileBundle>,
+    i11: slice::Iter<'a, FileBundle>,
+    i12: slice::Iter<'a, FileBundle>,
+    i21: slice::Iter<'a, FileBundle>,
+    i22: slice::Iter<'a, FileBundle>,
+}
+
+impl<'a> Iterator for Iter<'a> {
     type Item = SstFileBundle<'a>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        let sorted_bundles = self
-            .l0
-            .iter()
+    fn next(&mut self) -> Option<Self::Item> {
+        self.i01
+            .next()
+            .or_else(|| self.i02.next())
+            .or_else(|| self.i11.next())
+            .or_else(|| self.i12.next())
+            .or_else(|| self.i21.next())
+            .or_else(|| self.i22.next())
             .map(Into::<SstFileBundle<'a>>::into)
-            .chain(self.l1.iter().map(Into::<SstFileBundle<'a>>::into))
-            .chain(self.l2.iter().map(Into::<SstFileBundle<'a>>::into))
-            .collect_vec();
-        sorted_bundles.into_iter()
     }
 }
 
@@ -297,5 +320,70 @@ impl FileBundleHandle for FileBundles {
             remove_file(main_data_file_path).await.unwrap();
         }
         n_deleted_files
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+
+    use super::*;
+
+    #[test]
+    fn test_bundle_iterator_works_correctly() {
+        impl FileBundle {
+            fn new_with_path_level(
+                main_path: &Path,
+                level: Level,
+            ) -> Self {
+                Self {
+                    id: FileBundleId::new(),
+                    main_data_file_path: main_path.to_path_buf(),
+                    index_file_path: Default::default(),
+                    bloom_filter_file_path: Default::default(),
+                    level,
+                }
+            }
+        }
+
+        let mut l0 = VecDeque::new();
+        let mut l1 = VecDeque::new();
+        let mut l2 = VecDeque::new();
+
+        let path_1 = PathBuf::from("1");
+        let path_2 = PathBuf::from("2");
+        let path_3 = PathBuf::from("3");
+        let path_4 = PathBuf::from("4");
+        let path_5 = PathBuf::from("5");
+        let path_6 = PathBuf::from("6");
+
+        let bundle_1 = FileBundle::new_with_path_level(&path_1, Level::L0);
+        let bundle_2 = FileBundle::new_with_path_level(&path_2, Level::L0);
+        let bundle_3 = FileBundle::new_with_path_level(&path_3, Level::L1);
+        let bundle_4 = FileBundle::new_with_path_level(&path_4, Level::L1);
+        let bundle_5 = FileBundle::new_with_path_level(&path_5, Level::L2);
+        let bundle_6 = FileBundle::new_with_path_level(&path_6, Level::L2);
+
+        l0.push_back(bundle_2);
+        l0.push_front(bundle_1);
+        l1.push_back(bundle_4);
+        l1.push_front(bundle_3);
+        l2.push_back(bundle_6);
+        l2.push_front(bundle_5);
+
+        let bundles = FileBundlesLevelled {
+            base_path: Default::default(),
+            l0,
+            l1,
+            l2,
+        };
+
+        for (bundle, path) in bundles
+            .iter()
+            .zip_eq([path_1, path_2, path_3, path_4, path_5, path_6])
+        {
+            println!("{:?}", bundle);
+            assert_eq!(bundle.main_data_file_path, path);
+        }
     }
 }

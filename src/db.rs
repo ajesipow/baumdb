@@ -76,7 +76,7 @@ impl DB for BaumDb {
                     main_data_file_path,
                     index_file_path,
                     bloom_filter_file_path,
-                } in &*file_path_bundles.inner().read().await
+                } in file_path_bundles.inner().read().await.iter()
                 {
                     let bloom_filter =
                         DefaultBloomFilter::try_from_file(bloom_filter_file_path).await?;
